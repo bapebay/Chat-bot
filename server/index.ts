@@ -9,6 +9,7 @@ import { DEFAULT_MODELS_DIR, loadLocalEmbedder } from './knowledge/embedder.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { seedTemporaryKnowledge } from './knowledge/store.js';
 import { createLlmClient } from './llm/index.js';
+import { scheduleRetention } from './retention.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +24,7 @@ kb.rebuild();
 const app = await buildApp({ db, llm, kb, logger: true, webDir: path.resolve(here, '../web') });
 
 ensureInitialAdmin(db, (msg) => app.log.warn(msg));
+scheduleRetention(db, (msg) => app.log.info(msg));
 if (llm.provider === 'mock') {
   app.log.warn('테스트 모드(LLM_PROVIDER=mock): 실제 AI 대신 예시 답변을 돌려줍니다.');
 } else {

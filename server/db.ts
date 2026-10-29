@@ -209,6 +209,68 @@ CREATE TABLE IF NOT EXISTS eval_results (
   UNIQUE (run_id, item_id)
 );
 
+-- 답변 평가 (사용자 1명이 답변 1개에 하나)
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating TEXT NOT NULL,
+  reason TEXT,
+  comment TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (message_id, user_id)
+);
+
+-- 검토 대기함: Bad 평가·근거 없음·범위 외 답변을 모아 검수자가 처리
+CREATE TABLE IF NOT EXISTS review_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  resolution TEXT,
+  qa_id TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_review_queue_status ON review_queue(status, id);
+
+-- 표준답안 수정 이력
+CREATE TABLE IF NOT EXISTS qa_revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  qa_id TEXT NOT NULL,
+  version_id INTEGER,
+  before_json TEXT,
+  after_json TEXT,
+  reason TEXT NOT NULL DEFAULT '',
+  changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_qa_revisions_qa ON qa_revisions(qa_id, id);
+
+-- 지침 개정 공지
+CREATE TABLE IF NOT EXISTS notices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- 감사 로그: 누가 언제 무엇을 바꿨는지
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  username TEXT,
+  action TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(id);
+
 -- 의미 검색용 벡터 캐시 (같은 문장은 다시 계산하지 않음)
 CREATE TABLE IF NOT EXISTS embeddings (
   hash TEXT NOT NULL,
@@ -224,5 +286,14 @@ export function openDatabase(file = config.databasePath): DB {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** 예전 DB에 없던 열을 추가한다 */
+function migrate(db: DB) {
+  const has = (table: string, col: string) =>
+    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
+  // 지침 개정 등으로 다시 검수해야 하는 표준답안 표시 (검색에서는 빠지지 않음)
+  if (!has('qa_items', 'needs_recheck')) db.exec('ALTER TABLE qa_items ADD COLUMN needs_recheck INTEGER NOT NULL DEFAULT 0');
 }

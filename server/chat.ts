@@ -1,7 +1,8 @@
 import { config } from './config.js';
 import type { DB } from './db.js';
 import { OUTPUT_INSTRUCTIONS } from './defaults.js';
-import { strength, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
+import { qaSearchText, strength, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
+import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import type { ChatTurn, LlmClient } from './llm/index.js';
 import { getSetting } from './settings.js';
 
@@ -204,6 +205,22 @@ function outOfScopeText(h: Hit<{ guidance: string; department: string }>): strin
   ].join('\n');
 }
 
+/** "더 자세히요", "그럼 예시는요?"처럼 앞 질문을 이어 묻는 말인지 */
+function looksLikeFollowUp(query: string): boolean {
+  const len = query.replace(/\s/g, '').length;
+  return len <= 8 || (len <= 20 && /그럼|그러면|그렇다면|더 |자세히|예시|예를|다시|이어서|추가로|그 경우|위 /.test(query));
+}
+
+/** 이번 질문의 낱말이 찾은 근거 안에 들어 있는지 ("점심 메뉴 추천" 같은 엉뚱한 질문이 앞 주제 근거로 답해지지 않도록) */
+function overlapsEvidence(query: string, r: SearchResult): boolean {
+  const tokens = new Set(tokenize(query).filter((t) => !QUERY_STOP_TOKENS.has(t)));
+  const texts = [
+    ...r.qa.filter((h) => h.relevant).map((h) => `${qaSearchText(h.doc)}\n${h.doc.answer}`),
+    ...r.guideline.filter((h) => h.relevant).map((h) => `${h.doc.clause}\n${h.doc.text}`),
+  ];
+  return texts.some((t) => tokenize(t).some((tok) => tokens.has(tok)));
+}
+
 export async function generateAnswer(
   db: DB,
   llm: LlmClient,
@@ -216,10 +233,19 @@ export async function generateAnswer(
   const query = question.replace(/\[(?:전화번호|이메일|주민등록번호|계좌번호)\]/g, ' ');
   let result = await kb.search(query, businessType);
   // 짧은 후속 질문("그럼 글로컬은요?")은 직전 질문과 합쳐 다시 찾아본다
-  const prevQuestion = [...history].reverse().find((m) => m.role === 'user')?.content;
+  // 근거를 찾아 답했던 가장 최근의 '원래 질문' (이어 묻는 말은 건너뛴다. 엉뚱한 질문 뒤에 이어 물어도 앞 주제를 잇는다)
+  const prevQuestion = history.findLast(
+    (m, i) =>
+      m.role === 'user' &&
+      !looksLikeFollowUp(m.content) &&
+      (history[i + 1]?.answer_type === '근거답변' || history[i + 1]?.answer_type === '연결형'),
+  )?.content;
   if (!result.passed && prevQuestion) {
-    const retry = await kb.search(`${prevQuestion}\n${query}`, businessType);
-    if (retry.passed) result = retry;
+    // 이어 묻는 말이면 앞 질문으로 다시 찾고, 아니면 합쳐 찾되 이번 질문의 낱말이 근거에 있어야 쓴다
+    const retry = looksLikeFollowUp(query)
+      ? await kb.search(prevQuestion, businessType)
+      : await kb.search(`${prevQuestion}\n${query}`, businessType);
+    if (retry.passed && (looksLikeFollowUp(query) || overlapsEvidence(query, retry))) result = retry;
   }
 
   const base: Citations = {
@@ -341,6 +367,9 @@ export async function answerQuestion(
         latency,
       );
     db.prepare(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`).run(conversationId);
+    // 근거 없음·범위 외 답변은 표준답안 보완 후보로 검토 대기함에 넣는다
+    const source = answer.answerType === '근거없음' ? 'no_evidence' : answer.answerType === '답변범위외' ? 'out_of_scope' : null;
+    if (source) db.prepare('INSERT OR IGNORE INTO review_queue (message_id, source) VALUES (?, ?)').run(info.lastInsertRowid, source);
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) as MessageRow;
   })();
 }

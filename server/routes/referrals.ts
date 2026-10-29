@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { REGIONS } from '../constants.js';
 import type { DB } from '../db.js';
@@ -74,6 +75,7 @@ export function referralRoutes(app: FastifyInstance, db: DB) {
     const info = db
       .prepare('INSERT INTO referral_contacts (target, region, name, contact, note, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
       .run(c.target, c.region, c.name, c.contact, c.note, c.sort_order);
+    audit(db, req.user, '연결 연락처 추가', c.name);
     return db.prepare('SELECT * FROM referral_contacts WHERE id = ?').get(info.lastInsertRowid);
   });
 
@@ -85,6 +87,7 @@ export function referralRoutes(app: FastifyInstance, db: DB) {
     const info = db
       .prepare('UPDATE referral_contacts SET target = ?, region = ?, name = ?, contact = ?, note = ?, sort_order = ? WHERE id = ?')
       .run(c.target, c.region, c.name, c.contact, c.note, c.sort_order, id);
+    if (info.changes) audit(db, req.user, '연결 연락처 수정', c.name, c.contact);
     if (!info.changes) return reply.code(404).send({ error: '연락처를 찾을 수 없습니다.' });
     return db.prepare('SELECT * FROM referral_contacts WHERE id = ?').get(id);
   });
@@ -92,6 +95,7 @@ export function referralRoutes(app: FastifyInstance, db: DB) {
   app.delete('/api/admin/referral-contacts/:id', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const info = db.prepare('DELETE FROM referral_contacts WHERE id = ?').run(id);
+    if (info.changes) audit(db, req.user, '연결 연락처 삭제', `#${id}`);
     if (!info.changes) return reply.code(404).send({ error: '연락처를 찾을 수 없습니다.' });
     return { ok: true };
   });

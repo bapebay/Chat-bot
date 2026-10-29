@@ -1,8 +1,8 @@
-import { AlertCircle, Bot, Loader2, PlusCircle, Search, Send, ShieldAlert, Sidebar, Trash2 } from 'lucide-react';
+import { AlertCircle, Bot, Loader2, Megaphone, PlusCircle, Search, Send, ShieldAlert, Sidebar, Sparkles, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type ReferralContact, type Usage, type User } from '../api';
 import { InquiryModal } from '../components/InquiryModal';
-import { MessageList } from '../components/MessageList';
+import { MessageList, type Feedback } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
 import { findPii, maskPii, type PiiMatch } from '../pii';
 
@@ -23,10 +23,22 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   const [contacts, setContacts] = useState<ReferralContact[]>([]);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [piiFound, setPiiFound] = useState<PiiMatch[] | null>(null);
+  const [feedback, setFeedback] = useState<Record<number, Feedback>>({});
+  const [suggestions, setSuggestions] = useState<{ category: string; question: string }[]>([]);
+  const [notices, setNotices] = useState<{ id: number; title: string; body: string; created_at: string }[]>([]);
+  const [hiddenNotices, setHiddenNotices] = useState<number[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('hiddenNotices') ?? '[]');
+    } catch {
+      return [];
+    }
+  });
 
   useEffect(() => {
     api<ReferralContact[]>('/api/referral-contacts').then(setContacts).catch(() => undefined);
     api<Usage>('/api/usage').then(setUsage).catch(() => undefined);
+    api<{ category: string; question: string }[]>('/api/suggestions').then(setSuggestions).catch(() => undefined);
+    api<typeof notices>('/api/notices').then(setNotices).catch(() => undefined);
   }, []);
 
   const loadList = useCallback(async (q = '') => {
@@ -48,15 +60,19 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
 
   async function openConversation(c: Conversation) {
     setError('');
-    const res = await api<{ conversation: Conversation; messages: Message[] }>(`/api/conversations/${c.id}`);
+    const res = await api<{ conversation: Conversation; messages: Message[]; feedback: ({ message_id: number } & Feedback)[] }>(
+      `/api/conversations/${c.id}`,
+    );
     setCurrent(res.conversation);
     setMessages(res.messages);
+    setFeedback(Object.fromEntries(res.feedback.map((f) => [f.message_id, f])));
     if (window.innerWidth < 768) setSidebarOpen(false);
   }
 
   function startNew() {
     setCurrent(null);
     setMessages([]);
+    setFeedback({});
     setError('');
     setNewBusinessType(user.business_type);
   }
@@ -74,9 +90,24 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
     setCurrent(updated);
   }
 
-  async function send(e?: FormEvent, opts: { masked?: boolean } = {}) {
+  async function sendFeedback(messageId: number, f: Feedback) {
+    await api(`/api/messages/${messageId}/feedback`, { method: 'PUT', body: f });
+    setFeedback((p) => ({ ...p, [messageId]: f }));
+  }
+
+  function hideNotice(id: number) {
+    const next = [...hiddenNotices, id];
+    setHiddenNotices(next);
+    try {
+      localStorage.setItem('hiddenNotices', JSON.stringify(next));
+    } catch {
+      /* 저장 실패해도 이번 화면에서는 숨김 */
+    }
+  }
+
+  async function send(e?: FormEvent, opts: { masked?: boolean; text?: string } = {}) {
     e?.preventDefault();
-    let question = input.trim();
+    let question = (opts.text ?? input).trim();
     if (!question || pendingQuestion) return;
     // 개인정보로 보이는 값이 있으면 보내기 전에 확인받고 가린다
     if (!opts.masked) {
@@ -186,6 +217,20 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
           </label>
         </div>
 
+        {notices
+          .filter((n) => !hiddenNotices.includes(n.id))
+          .map((n) => (
+            <div key={n.id} className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              <Megaphone className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <b>{n.title}</b>
+                {n.body && <span className="block whitespace-pre-wrap text-xs">{n.body}</span>}
+              </div>
+              <button type="button" onClick={() => hideNotice(n.id)} title="닫기" className="shrink-0 text-amber-700 hover:text-amber-900">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-4xl flex-col gap-4 p-4">
             {messages.length === 0 && !pendingQuestion && (
@@ -200,11 +245,33 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
                 <p className="mt-3 text-xs text-slate-400">
                   법령 해석, 개별 집행 건의 인정 여부, 성과관리는 답변 범위가 아닙니다.
                 </p>
+                {suggestions.length > 0 && (
+                  <div className="mt-5 border-t border-slate-200 pt-4 text-left dark:border-slate-700">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
+                      <Sparkles className="h-3.5 w-3.5" /> 자주 묻는 질문
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {suggestions.map((sg) => (
+                        <button
+                          key={sg.category}
+                          type="button"
+                          onClick={() => send(undefined, { text: sg.question })}
+                          className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-left text-sm text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-indigo-950"
+                        >
+                          <span className="mb-0.5 block text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">{sg.category}</span>
+                          {sg.question}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             <MessageList
               messages={messages}
               contacts={contacts}
+              feedback={feedback}
+              onFeedback={sendFeedback}
               onAskStaff={() => setInquiryFor({ conversationId: current?.id ?? null, text: '' })}
             />
             {pendingQuestion && (

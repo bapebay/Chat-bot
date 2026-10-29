@@ -20,6 +20,12 @@ export const EDITABLE_SETTINGS = {
   daily_limit_total: '3000',
   // 평가 통과 기준: 기대 표준답안 인용 비율(0~1). 잘못된 결론(검수자 표시)은 0건이어야 통과
   eval_pass_hit_rate: '0.8',
+  // 비용 추정용 모델 단가 (USD, 100만 토큰당)와 환율. 쓰는 모델에 맞게 관리자가 고친다
+  price_input_per_mtok: '0.10',
+  price_output_per_mtok: '0.50',
+  usd_krw: '1400',
+  // 대화 보관 기간(일). 지난 대화는 자동 삭제. 0 = 삭제하지 않음
+  retention_days: '0',
 } as const;
 
 export type SettingKey = keyof typeof EDITABLE_SETTINGS;
@@ -48,6 +54,16 @@ export function settingProblem(key: SettingKey, value: string): string | null {
     case 'daily_limit_total': {
       const n = Number(value);
       return Number.isInteger(n) && n >= 0 && n <= 1000000 ? null : '0 이상의 정수를 입력하세요 (0 = 제한 없음).';
+    }
+    case 'price_input_per_mtok':
+    case 'price_output_per_mtok':
+    case 'usd_krw': {
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 ? null : '0 이상의 숫자를 입력하세요.';
+    }
+    case 'retention_days': {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 0 && n <= 3650 ? null : '0~3650 사이의 정수를 입력하세요 (0 = 삭제하지 않음).';
     }
     case 'principles':
       return value.length > 30000 ? '내용이 너무 깁니다(30,000자 이내).' : null;

@@ -7,6 +7,7 @@ import type { KnowledgeBase } from '../knowledge/index.js';
 import { maskPii } from '../knowledge/text.js';
 import { LlmError, type LlmClient } from '../llm/index.js';
 import { limitExceeded, userUsage } from '../usage.js';
+import { feedbackFor } from './operations.js';
 import { idParam, str } from './util.js';
 
 interface ConversationRow {
@@ -64,7 +65,7 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
   app.get('/api/conversations/:id', { preHandler: loggedIn }, async (req, reply) => {
     const conv = ownConversation(req.user.id, (req.params as { id: string }).id);
     if (!conv) return reply.code(404).send({ error: '대화를 찾을 수 없습니다.' });
-    return { conversation: conv, messages: listMessages(db, conv.id) };
+    return { conversation: conv, messages: listMessages(db, conv.id), feedback: feedbackFor(db, conv.id, req.user.id) };
   });
 
   app.patch('/api/conversations/:id', { preHandler: loggedIn }, async (req, reply) => {

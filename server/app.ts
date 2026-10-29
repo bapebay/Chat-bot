@@ -13,7 +13,9 @@ import { authRoutes } from './routes/auth.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { inquiryRoutes } from './routes/inquiries.js';
 import { knowledgeRoutes, MAX_UPLOAD_BYTES } from './routes/knowledge.js';
+import { adminOpsRoutes } from './routes/admin-ops.js';
 import { evaluationRoutes } from './routes/evaluation.js';
+import { operationsRoutes } from './routes/operations.js';
 import { referralRoutes, seedReferralContacts } from './routes/referrals.js';
 
 export interface BuildOptions {
@@ -44,6 +46,10 @@ export async function buildApp({ db, llm, kb, logger = false, webDir }: BuildOpt
   seedReferralContacts(db);
   referralRoutes(app, db);
   evaluationRoutes(app, db, llm, kb);
+  operationsRoutes(app, db, kb);
+  adminOpsRoutes(app, db);
+
+  app.get('/api/health', async () => ({ ok: true }));
 
   // 배포 시: 빌드된 화면 파일을 함께 제공
   if (webDir && fs.existsSync(path.join(webDir, 'index.html'))) {

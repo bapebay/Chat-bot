@@ -1,5 +1,6 @@
 import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { BUSINESS_TYPES } from '../constants.js';
 import type { DB } from '../db.js';
@@ -97,6 +98,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     try {
       const { items, warnings } = await parseQaWorkbook(up.buffer);
       const id = createQaDraft(db, up.filename, req.user.id, items, warnings);
+      audit(db, req.user, '표준 Q&A 업로드(미리보기)', `#${id} ${up.filename}`, `${items.length}건`);
       return listQaVersions(db).find((v) => v.id === id);
     } catch (e) {
       return fail(reply, e);
@@ -108,6 +110,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   app.post('/api/admin/knowledge/qa/versions/:id/activate', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id);
     if (!id || !activateQaVersion(db, id)) return reply.code(404).send({ error: '버전을 찾을 수 없습니다.' });
+    audit(db, req.user, '표준 Q&A 서비스 적용', `#${id}`);
     kb.rebuild();
     return { ok: true, versions: listQaVersions(db) };
   });
@@ -154,6 +157,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     try {
       const items = await parseOutOfScope(up.buffer, up.filename);
       replaceOutOfScope(db, items);
+      audit(db, req.user, '답변범위 외 목록 교체', up.filename, `${items.length}건`);
       kb.rebuild();
       return { ok: true, count: items.length };
     } catch (e) {
@@ -172,6 +176,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     try {
       const chunks = await chunkUpload(up.buffer, up.filename);
       const id = addGuidelineDoc(db, { name, kind, filename: up.filename, userId: req.user.id }, chunks);
+      audit(db, req.user, '지침·FAQ 업로드', name, `${chunks.length}개 조항`);
       kb.rebuild();
       return { ok: true, id, chunk_count: chunks.length };
     } catch (e) {
@@ -188,6 +193,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const active = ((req.body ?? {}) as Record<string, unknown>).active ? 1 : 0;
     const info = db.prepare('UPDATE guideline_docs SET active = ? WHERE id = ?').run(active, id);
+    if (info.changes) audit(db, req.user, active ? '지침 문서 사용' : '지침 문서 사용 중지', `#${id}`);
     if (!info.changes) return reply.code(404).send({ error: '문서를 찾을 수 없습니다.' });
     kb.rebuild();
     return { ok: true };
@@ -196,6 +202,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   app.delete('/api/admin/knowledge/guidelines/:id', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const info = db.prepare('DELETE FROM guideline_docs WHERE id = ?').run(id);
+    if (info.changes) audit(db, req.user, '지침 문서 삭제', `#${id}`);
     if (!info.changes) return reply.code(404).send({ error: '문서를 찾을 수 없습니다.' });
     kb.rebuild();
     return { ok: true };

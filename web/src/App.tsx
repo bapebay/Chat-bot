@@ -1,4 +1,4 @@
-import { Inbox, KeyRound, Layers, Loader2, LogOut, MessageSquare, Moon, Settings, Sun, User as UserIcon } from 'lucide-react';
+import { ClipboardList, Inbox, KeyRound, Layers, Loader2, LogOut, MessageSquare, Moon, Settings, Sun, User as UserIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, ROLE_LABELS, type Meta, type User } from './api';
 import { PasswordForm } from './components/PasswordForm';
@@ -7,8 +7,9 @@ import { AdminView } from './views/AdminView';
 import { AuthPage } from './views/AuthPage';
 import { ChatView } from './views/ChatView';
 import { InquiriesView } from './views/InquiriesView';
+import { ReviewView } from './views/ReviewView';
 
-type View = 'chat' | 'inquiries' | 'admin';
+type View = 'chat' | 'inquiries' | 'review' | 'admin';
 
 function useDarkMode() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
@@ -31,7 +32,7 @@ export default function App() {
   const [view, setView] = useState<View>('chat');
   const [dark, setDark] = useDarkMode();
   const [showPw, setShowPw] = useState(false);
-  const [badges, setBadges] = useState({ inquiries: 0, users: 0 });
+  const [badges, setBadges] = useState({ inquiries: 0, users: 0, review: 0 });
 
   const refreshMe = useCallback(async () => {
     try {
@@ -54,12 +55,13 @@ export default function App() {
   const refreshBadges = useCallback(async () => {
     if (!user || user.must_change_password || user.role === 'user') return;
     try {
+      const review = (await api<unknown[]>('/api/review/queue')).length;
       if (user.role === 'admin') {
         const s = await api<{ counts: Record<string, number> }>('/api/admin/system');
-        setBadges({ inquiries: s.counts.pending_inquiries, users: s.counts.pending_users });
+        setBadges({ inquiries: s.counts.pending_inquiries, users: s.counts.pending_users, review });
       } else {
         const list = await api<unknown[]>('/api/manage/inquiries?status=pending');
-        setBadges({ inquiries: list.length, users: 0 });
+        setBadges({ inquiries: list.length, users: 0, review });
       }
     } catch {
       /* 배지는 실패해도 무시 */
@@ -137,6 +139,7 @@ export default function App() {
           <nav className="flex rounded-lg bg-slate-700 p-1 dark:bg-slate-800">
             {navButton('chat', '챗봇', MessageSquare)}
             {navButton('inquiries', user.role === 'user' ? '1:1 문의' : '문의 관리', Inbox, badges.inquiries)}
+            {user.role !== 'user' && navButton('review', '검수', ClipboardList, badges.review)}
             {user.role === 'admin' && navButton('admin', '관리', Settings, badges.users)}
           </nav>
           <div className="flex items-center gap-3 text-sm text-slate-300">
@@ -164,6 +167,7 @@ export default function App() {
 
       {view === 'chat' && <ChatView user={user} meta={meta} onInquirySent={refreshBadges} />}
       {view === 'inquiries' && <InquiriesView user={user} onChanged={refreshBadges} />}
+      {view === 'review' && user.role !== 'user' && <ReviewView user={user} />}
       {view === 'admin' && user.role === 'admin' && <AdminView me={user} meta={meta} onUsersChanged={refreshBadges} />}
 
       {showPw && (

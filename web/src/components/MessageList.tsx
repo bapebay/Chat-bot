@@ -1,7 +1,86 @@
-import { BookOpen, Bot, ChevronDown, FileText, MessageSquareQuote, Phone, Share2, User as UserIcon } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, FileText, MessageSquareQuote, Phone, Share2, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
 import { parseCitations, type AnswerType, type Citations, type Message, type ReferralContact } from '../api';
 import { Markdown } from './ui';
+
+export interface Feedback {
+  rating: 'good' | 'bad';
+  reason?: string | null;
+  comment?: string;
+}
+
+const BAD_REASONS = ['틀린 내용', '답이 부족', '근거가 엉뚱함', '연결이 부적절'];
+
+/** 답변 평가: 좋아요 / 아쉬워요(사유 + 의견) */
+function FeedbackButtons({ current, onSubmit }: { current?: Feedback; onSubmit: (f: Feedback) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState(current?.reason ?? '');
+  const [comment, setComment] = useState(current?.comment ?? '');
+  const [sent, setSent] = useState(false);
+  const active = current?.rating;
+  return (
+    <span className="relative flex items-center gap-1">
+      <button
+        type="button"
+        title="도움이 됐어요"
+        onClick={() => onSubmit({ rating: 'good' }).then(() => setOpen(false))}
+        className={`rounded p-1 hover:text-green-600 ${active === 'good' ? 'text-green-600' : ''}`}
+      >
+        <ThumbsUp className="h-3.5 w-3.5" />
+      </button>
+      <button
+        type="button"
+        title="아쉬워요"
+        onClick={() => setOpen(!open)}
+        className={`rounded p-1 hover:text-red-500 ${active === 'bad' ? 'text-red-500' : ''}`}
+      >
+        <ThumbsDown className="h-3.5 w-3.5" />
+      </button>
+      {sent && <span className="text-green-600">평가 감사합니다</span>}
+      {open && (
+        <span className="card absolute left-0 top-7 z-10 block w-72 space-y-2 p-3 text-xs text-slate-700 shadow-lg dark:text-slate-200">
+          <span className="block font-semibold">어떤 점이 아쉬웠나요?</span>
+          <span className="flex flex-wrap gap-1">
+            {BAD_REASONS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setReason(r)}
+                className={`rounded-full border px-2 py-0.5 ${reason === r ? 'border-red-500 bg-red-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
+              >
+                {r}
+              </button>
+            ))}
+          </span>
+          <textarea
+            className="input h-16 resize-none text-xs"
+            placeholder="의견 (선택, 개인정보는 적지 마세요)"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+          <span className="flex justify-end gap-1">
+            <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setOpen(false)}>
+              취소
+            </button>
+            <button
+              type="button"
+              className="btn-primary px-2 py-1 text-xs"
+              disabled={!reason}
+              onClick={() =>
+                onSubmit({ rating: 'bad', reason, comment }).then(() => {
+                  setOpen(false);
+                  setSent(true);
+                })
+              }
+            >
+              보내기
+            </button>
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
 
 const DISCLAIMER_SEPARATOR = '\n\n---\n\n> ';
 
@@ -17,12 +96,17 @@ export function MessageList({
   onAskStaff,
   showUsage = false,
   contacts = [],
+  feedback = {},
+  onFeedback,
 }: {
   messages: Message[];
   onAskStaff?: () => void;
   showUsage?: boolean;
   /** 이 사용자에게 보여줄 연결 대상 연락처 (내 지역 앵커센터 등) */
   contacts?: ReferralContact[];
+  /** 답변 id → 내가 남긴 평가 */
+  feedback?: Record<number, Feedback>;
+  onFeedback?: (messageId: number, f: Feedback) => Promise<void>;
 }) {
   return (
     <>
@@ -37,7 +121,7 @@ export function MessageList({
             </div>
           </div>
         ) : (
-          <AssistantMessage key={m.id} m={m} onAskStaff={onAskStaff} showUsage={showUsage} contacts={contacts} />
+          <AssistantMessage key={m.id} m={m} onAskStaff={onAskStaff} showUsage={showUsage} contacts={contacts} feedback={feedback[m.id]} onFeedback={onFeedback} />
         ),
       )}
     </>
@@ -49,11 +133,15 @@ function AssistantMessage({
   onAskStaff,
   showUsage,
   contacts,
+  feedback,
+  onFeedback,
 }: {
   m: Message;
   onAskStaff?: () => void;
   showUsage: boolean;
   contacts: ReferralContact[];
+  feedback?: Feedback;
+  onFeedback?: (messageId: number, f: Feedback) => Promise<void>;
 }) {
   const c = parseCitations(m);
   const type = m.answer_type ? ANSWER_TYPE_STYLE[m.answer_type] : null;
@@ -77,6 +165,7 @@ function AssistantMessage({
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 px-1 text-xs text-slate-400">
+          {onFeedback && <FeedbackButtons current={feedback} onSubmit={(f) => onFeedback(m.id, f)} />}
           {onAskStaff && (
             <button type="button" onClick={onAskStaff} className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-300">
               <MessageSquareQuote className="h-3.5 w-3.5" /> 담당자에게 문의

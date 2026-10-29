@@ -1,4 +1,4 @@
-import { ClipboardCheck, Database, Eye, FileSignature, History, Info, KeyRound, Lock, Share2, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, Database, Eye, FileSignature, History, Info, KeyRound, Lock, Megaphone, ScrollText, Share2, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
@@ -16,20 +16,25 @@ import { MessageList } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
 import { EvalTab } from './EvalTab';
 import { KnowledgeTab } from './KnowledgeTab';
+import { AnswersBrowser, AuditTab, NoticeTab, StatsTab } from './OpsTabs';
 import { ReferralTab } from './ReferralTab';
 
-type Tab = 'users' | 'knowledge' | 'referrals' | 'eval' | 'conversations' | 'prompt' | 'system';
+type Tab = 'stats' | 'users' | 'knowledge' | 'referrals' | 'eval' | 'conversations' | 'answers' | 'prompt' | 'notices' | 'audit' | 'system';
 
 export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; onUsersChanged: () => void }) {
-  const [tab, setTab] = useState<Tab>('users');
+  const [tab, setTab] = useState<Tab>('stats');
   const [viewUser, setViewUser] = useState<User | null>(null);
   const tabs: { key: Tab; label: string; icon: typeof Users }[] = [
+    { key: 'stats', label: '사용량·비용', icon: BarChart3 },
     { key: 'users', label: '사용자·권한', icon: Users },
     { key: 'knowledge', label: '지식 데이터', icon: Database },
     { key: 'referrals', label: '연결 연락처', icon: Share2 },
     { key: 'eval', label: '평가', icon: ClipboardCheck },
     { key: 'conversations', label: '대화 열람', icon: Eye },
+    { key: 'answers', label: '답변 모아보기', icon: ClipboardCheck },
     { key: 'prompt', label: '프롬프트·면책 문구', icon: FileSignature },
+    { key: 'notices', label: '공지', icon: Megaphone },
+    { key: 'audit', label: '감사 로그', icon: ScrollText },
     { key: 'system', label: '시스템 정보', icon: Info },
   ];
 
@@ -62,6 +67,10 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
         {tab === 'knowledge' && <KnowledgeTab meta={meta} />}
         {tab === 'referrals' && <ReferralTab meta={meta} />}
         {tab === 'eval' && <EvalTab />}
+        {tab === 'stats' && <StatsTab />}
+        {tab === 'answers' && <AnswersBrowser />}
+        {tab === 'notices' && <NoticeTab />}
+        {tab === 'audit' && <AuditTab />}
         {tab === 'conversations' && <ConversationsTab initialUser={viewUser} />}
         {tab === 'prompt' && <PromptTab />}
         {tab === 'system' && <SystemTab />}
@@ -573,6 +582,7 @@ function LimitSettings() {
   const keys = [
     { key: 'daily_limit_user', label: '사용자 1명당 하루 질문 수' },
     { key: 'daily_limit_total', label: '전체 하루 질문 수' },
+    { key: 'retention_days', label: '대화 보관 기간(일, 0 = 삭제 안 함)' },
   ];
   const [values, setValues] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState<Record<string, string>>({});
@@ -599,7 +609,7 @@ function LimitSettings() {
 
   return (
     <section className="card space-y-3 p-4">
-      <h3 className="font-bold text-slate-800 dark:text-slate-100">질문 상한 (비용 관리)</h3>
+      <h3 className="font-bold text-slate-800 dark:text-slate-100">질문 상한·대화 보관 기간</h3>
       <div className="grid gap-3 sm:grid-cols-2">
         {keys.map((k) => (
           <div key={k.key}>
@@ -613,7 +623,7 @@ function LimitSettings() {
           </div>
         ))}
       </div>
-      <p className="text-xs text-slate-500 dark:text-slate-400">한국 시간 0시에 초기화됩니다. 0으로 두면 제한하지 않습니다. 근거 없음·범위 외 판정처럼 AI를 부르지 않은 질문도 횟수에 포함됩니다.</p>
+      <p className="text-xs text-slate-500 dark:text-slate-400">질문 상한은 한국 시간 0시에 초기화되며 0이면 제한하지 않습니다 (AI를 부르지 않은 질문도 포함). 보관 기간이 지난 대화는 서버가 6시간마다 자동 삭제합니다 (1:1 문의에 첨부된 대화 사본은 남음).</p>
       {message && <Notice kind={message.kind}>{message.text}</Notice>}
     </section>
   );

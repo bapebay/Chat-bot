@@ -1,0 +1,19 @@
+# 사용법: .env 를 채운 뒤  docker compose up -d --build
+# 접속: http://서버주소:3000   (HTTPS는 앞단 웹서버/로드밸런서에서 처리하고 .env 에 COOKIE_SECURE=true)
+services:
+  chatbot:
+    build: .
+    image: anchor-chatbot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_PATH: /app/data/chatbot.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

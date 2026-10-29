@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { audit } from '../audit.js';
 import {
   deleteUserSessions,
   generateTempPassword,
@@ -69,6 +70,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
       `INSERT INTO users (username, password_hash, org_type, org_name, region, business_type, role, status, must_change_password)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 1)`,
     ).run(username, hashPassword(tempPassword), orgType, orgName, region, businessType, role);
+    audit(db, req.user, '계정 생성', username, `권한 ${role}`);
     return { ok: true, temp_password: tempPassword };
   });
 
@@ -76,6 +78,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const user = findUser((req.params as { id: string }).id);
     if (!user) return reply.code(404).send({ error: '사용자를 찾을 수 없습니다.' });
     db.prepare(`UPDATE users SET status = 'approved' WHERE id = ?`).run(user.id);
+    audit(db, req.user, '가입 승인', user.username);
     return { ok: true };
   });
 
@@ -88,6 +91,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
       return reply.code(400).send({ error: '마지막 관리자의 권한은 바꿀 수 없습니다.' });
     }
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, user.id);
+    audit(db, req.user, '권한 변경', user.username, `${user.role} → ${role}`);
     return { ok: true };
   });
 
@@ -95,6 +99,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const user = findUser((req.params as { id: string }).id);
     if (!user) return reply.code(404).send({ error: '사용자를 찾을 수 없습니다.' });
     db.prepare('UPDATE users SET locked = 0, failed_attempts = 0 WHERE id = ?').run(user.id);
+    audit(db, req.user, '잠금 해제', user.username);
     return { ok: true };
   });
 
@@ -106,6 +111,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
       'UPDATE users SET password_hash = ?, must_change_password = 1, locked = 0, failed_attempts = 0 WHERE id = ?',
     ).run(hashPassword(tempPassword), user.id);
     deleteUserSessions(db, user.id);
+    audit(db, req.user, '비밀번호 초기화', user.username);
     return { ok: true, temp_password: tempPassword };
   });
 
@@ -117,6 +123,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
       return reply.code(400).send({ error: '마지막 관리자는 삭제할 수 없습니다.' });
     }
     db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    audit(db, req.user, user.status === 'pending' ? '가입 거절' : '계정 삭제', user.username);
     return { ok: true };
   });
 
@@ -153,6 +160,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const problem = settingProblem(key, value);
     if (problem) return reply.code(400).send({ error: problem });
     setSetting(db, key, value, req.user.id);
+    audit(db, req.user, '설정 변경', key, value.length > 80 ? `${value.slice(0, 80)}…` : value);
     onKnowledgeChanged(key);
     return { value, revisions: listRevisions(db, key) };
   });
@@ -164,6 +172,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const rev = revId ? getRevision(db, key, revId) : undefined;
     if (!rev) return reply.code(404).send({ error: '해당 이력을 찾을 수 없습니다.' });
     setSetting(db, key, rev.value, req.user.id);
+    audit(db, req.user, '설정 되돌리기', key, `이력 #${revId}`);
     onKnowledgeChanged(key);
     return { value: rev.value, revisions: listRevisions(db, key) };
   });
