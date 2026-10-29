@@ -1,0 +1,26 @@
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface LlmRequest {
+  system: string;
+  messages: ChatTurn[];
+}
+
+export interface LlmResult {
+  text: string;
+  provider: string;
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
+export interface LlmClient {
+  provider: string;
+  model: string;
+  generate(req: LlmRequest): Promise<LlmResult>;
+}
+
+/** 사용자에게 그대로 보여줘도 되는 오류 */
+export class LlmError extends Error {}
