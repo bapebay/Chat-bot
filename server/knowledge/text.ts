@@ -30,11 +30,8 @@ export function tokenize(text: string): string[] {
   const words = (normalize(text).match(/[\p{L}\p{N}]+/gu) ?? []).map(stripSuffix);
   const out: string[] = [];
   for (const w of words) {
-    if (w.length === 1) {
-      // 한 글자 영문·숫자는 의미가 약하므로 버린다 (한 글자 한글 단어는 남김)
-      if (/[\p{Script=Hangul}]/u.test(w)) out.push(w);
-      continue;
-    }
+    // 한 글자 단어(제, 로, 수 …)는 대부분 조사·대명사라 버린다
+    if (w.length === 1) continue;
     for (let i = 0; i < w.length - 1; i++) out.push(w.slice(i, i + 2));
   }
   return out;

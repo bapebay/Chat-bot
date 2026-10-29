@@ -141,6 +141,17 @@ CREATE TABLE IF NOT EXISTS guideline_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_guideline_chunks_doc ON guideline_chunks(doc_id, seq);
 
+-- 연결 대상 연락처. target: 지역앵커센터(지역별) / e나라도움 / 교육부 / 대학규정 / 담당자
+CREATE TABLE IF NOT EXISTS referral_contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target TEXT NOT NULL,
+  region TEXT,
+  name TEXT NOT NULL,
+  contact TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
 -- 의미 검색용 벡터 캐시 (같은 문장은 다시 계산하지 않음)
 CREATE TABLE IF NOT EXISTS embeddings (
   hash TEXT NOT NULL,

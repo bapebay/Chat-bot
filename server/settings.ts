@@ -15,6 +15,9 @@ export const EDITABLE_SETTINGS = {
   // 모델에 넘기는 검색 결과 수
   top_k_qa: '6',
   top_k_guideline: '3',
+  // 하루 질문 상한 (0 = 제한 없음). 사용자 1명당 / 전체
+  daily_limit_user: '50',
+  daily_limit_total: '3000',
 } as const;
 
 export type SettingKey = keyof typeof EDITABLE_SETTINGS;
@@ -37,6 +40,11 @@ export function settingProblem(key: SettingKey, value: string): string | null {
     case 'top_k_guideline': {
       const n = Number(value);
       return Number.isInteger(n) && n >= 1 && n <= 10 ? null : '1~10 사이의 정수를 입력하세요.';
+    }
+    case 'daily_limit_user':
+    case 'daily_limit_total': {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 0 && n <= 1000000 ? null : '0 이상의 정수를 입력하세요 (0 = 제한 없음).';
     }
     case 'principles':
       return value.length > 30000 ? '내용이 너무 깁니다(30,000자 이내).' : null;

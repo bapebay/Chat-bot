@@ -212,11 +212,13 @@ async function generateAnswer(
   businessType: string,
   question: string,
 ): Promise<Answer> {
-  let result = await kb.search(question, businessType);
+  // 가린 개인정보 표시([전화번호] 등)는 검색어에서 뺀다
+  const query = question.replace(/\[(?:전화번호|이메일|주민등록번호|계좌번호)\]/g, ' ');
+  let result = await kb.search(query, businessType);
   // 짧은 후속 질문("그럼 글로컬은요?")은 직전 질문과 합쳐 다시 찾아본다
   const prevQuestion = [...history].reverse().find((m) => m.role === 'user')?.content;
   if (!result.passed && prevQuestion) {
-    const retry = await kb.search(`${prevQuestion}\n${question}`, businessType);
+    const retry = await kb.search(`${prevQuestion}\n${query}`, businessType);
     if (retry.passed) result = retry;
   }
 
@@ -269,10 +271,16 @@ async function generateAnswer(
   const citedGuide = new Set(
     Array.isArray(json.cited_guideline) ? json.cited_guideline.map((g) => String((g as { id?: unknown })?.id ?? '')) : [],
   );
-  const answerType = (ANSWER_TYPES as readonly string[]).includes(String(json.answer_type))
+  let answerType = (ANSWER_TYPES as readonly string[]).includes(String(json.answer_type))
     ? (json.answer_type as AnswerType)
     : '근거답변';
-  const referral = (REFERRALS as readonly string[]).includes(String(json.referral)) ? String(json.referral) : null;
+  let referral = (REFERRALS as readonly string[]).includes(String(json.referral)) ? String(json.referral) : null;
+
+  // 인용한 표준답안이 모두 '연결형'이면 모델 판정과 관계없이 연결형으로 안내한다 (기능설명서 5-2)
+  const citedDocs = result.qa.filter((h) => citedQa.has(h.doc.qa_id));
+  if (answerType === '근거답변' && citedDocs.length > 0 && citedDocs.every((h) => h.doc.is_referral)) answerType = '연결형';
+  if (answerType === '근거답변') referral = null;
+  else if (!referral) referral = answerType === '연결형' ? '지역앵커센터' : '담당자';
 
   return {
     ...usage,

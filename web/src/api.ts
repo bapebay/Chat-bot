@@ -83,6 +83,21 @@ export function parseCitations(m: Message): Citations | null {
   }
 }
 
+export interface ReferralContact {
+  id: number;
+  target: '지역앵커센터' | 'e나라도움' | '교육부' | '대학규정' | '담당자';
+  region: string | null;
+  name: string;
+  contact: string;
+  note: string;
+  sort_order: number;
+}
+
+export interface Usage {
+  used: number;
+  limit: number;
+}
+
 export interface Inquiry {
   id: number;
   user_id: number;

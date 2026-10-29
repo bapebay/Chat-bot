@@ -16,7 +16,10 @@ function createMockClient(): LlmClient {
     async generate(req: LlmRequest) {
       const last = req.messages[req.messages.length - 1]?.content ?? '';
       const question = (last.split('[질문]\n')[1] ?? last).trim();
-      const qaIds = [...last.matchAll(/\[표준답안 통합번호: ([^\]|]+?)(?: \||\])/g)].map((m) => m[1].trim()).slice(0, 2);
+      const qaHeads = [...last.matchAll(/\[표준답안 통합번호: ([^\]|]+?) \|[^\]]*연결형: (예|아니오)\]/g)];
+      // 가장 관련 있는 답안이 연결형이면 연결형으로 답하는 흉내를 낸다
+      const referral = qaHeads[0]?.[2] === '예';
+      const qaIds = (referral ? qaHeads.slice(0, 1) : qaHeads.slice(0, 2)).map((m) => m[1].trim());
       const guide = [...last.matchAll(/\[지침 (G\d+) \| ([^|\]]*)(?:\| [^|\]]*)?\| 쪽: ([^\]]*)\]/g)].slice(0, 1);
       await new Promise((r) => setTimeout(r, 400));
       const body = [
@@ -30,12 +33,12 @@ function createMockClient(): LlmClient {
       ].join('\n');
       const text = req.jsonSchema
         ? JSON.stringify({
-            answer_type: '근거답변',
+            answer_type: referral ? '연결형' : '근거답변',
             business_type: '공통',
             answer_markdown: body,
             cited_qa_ids: qaIds,
             cited_guideline: guide.map((g) => ({ id: g[1], clause: g[2].trim(), page: g[3].trim() })),
-            referral: '없음',
+            referral: referral ? '지역앵커센터' : '없음',
           })
         : body;
       return {

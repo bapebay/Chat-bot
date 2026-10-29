@@ -1,9 +1,10 @@
-import { AlertCircle, Bot, Loader2, PlusCircle, Search, Send, Sidebar, Trash2 } from 'lucide-react';
+import { AlertCircle, Bot, Loader2, PlusCircle, Search, Send, ShieldAlert, Sidebar, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type User } from '../api';
+import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type ReferralContact, type Usage, type User } from '../api';
 import { InquiryModal } from '../components/InquiryModal';
 import { MessageList } from '../components/MessageList';
-import { Notice, Select } from '../components/ui';
+import { Modal, Notice, Select } from '../components/ui';
+import { findPii, maskPii, type PiiMatch } from '../pii';
 
 export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta; onInquirySent: () => void }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -14,10 +15,19 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   const [input, setInput] = useState('');
   const [pendingQuestion, setPendingQuestion] = useState('');
   const [error, setError] = useState('');
+  const [limitReached, setLimitReached] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
   const [inquiryFor, setInquiryFor] = useState<{ conversationId: number | null; text: string } | null>(null);
   const [inquiryDone, setInquiryDone] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const [contacts, setContacts] = useState<ReferralContact[]>([]);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [piiFound, setPiiFound] = useState<PiiMatch[] | null>(null);
+
+  useEffect(() => {
+    api<ReferralContact[]>('/api/referral-contacts').then(setContacts).catch(() => undefined);
+    api<Usage>('/api/usage').then(setUsage).catch(() => undefined);
+  }, []);
 
   const loadList = useCallback(async (q = '') => {
     try {
@@ -64,10 +74,17 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
     setCurrent(updated);
   }
 
-  async function send(e?: FormEvent) {
+  async function send(e?: FormEvent, opts: { masked?: boolean } = {}) {
     e?.preventDefault();
-    const question = input.trim();
+    let question = input.trim();
     if (!question || pendingQuestion) return;
+    // 개인정보로 보이는 값이 있으면 보내기 전에 확인받고 가린다
+    if (!opts.masked) {
+      const found = findPii(question);
+      if (found.length) return setPiiFound(found);
+    } else {
+      question = maskPii(question);
+    }
     setError('');
     setPendingQuestion(question);
     setInput('');
@@ -77,15 +94,17 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
         conv = await api<Conversation>('/api/conversations', { body: { business_type: newBusinessType } });
         setCurrent(conv);
       }
-      const res = await api<{ conversation: Conversation; messages: Message[] }>(`/api/conversations/${conv.id}/messages`, {
+      const res = await api<{ conversation: Conversation; messages: Message[]; usage: Usage }>(`/api/conversations/${conv.id}/messages`, {
         body: { content: question },
       });
+      setUsage(res.usage);
       setCurrent(res.conversation);
       setMessages(res.messages);
       loadList(search.trim());
     } catch (err) {
       setInput(question);
       setError(err instanceof ApiError ? err.message : '답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      setLimitReached(err instanceof ApiError && err.code === 'DAILY_LIMIT');
     } finally {
       setPendingQuestion('');
     }
@@ -179,11 +198,15 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
                   위에서 <b>사업 유형</b>을 확인한 뒤 질문해 주세요.
                 </p>
                 <p className="mt-3 text-xs text-slate-400">
-                  법령 해석, 개별 집행 건의 인정 여부, 성과관리는 답변 범위가 아닙니다. 이름·연락처 등 개인정보는 입력하지 마세요.
+                  법령 해석, 개별 집행 건의 인정 여부, 성과관리는 답변 범위가 아닙니다.
                 </p>
               </div>
             )}
-            <MessageList messages={messages} onAskStaff={() => setInquiryFor({ conversationId: current?.id ?? null, text: '' })} />
+            <MessageList
+              messages={messages}
+              contacts={contacts}
+              onAskStaff={() => setInquiryFor({ conversationId: current?.id ?? null, text: '' })}
+            />
             {pendingQuestion && (
               <>
                 <div className="flex justify-end">
@@ -202,9 +225,11 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
                   <AlertCircle className="h-4 w-4" /> {error}
                 </div>
                 <div className="mt-3 flex gap-2">
-                  <button type="button" className="btn-secondary" onClick={() => send()}>
-                    다시 시도
-                  </button>
+                  {!limitReached && (
+                    <button type="button" className="btn-secondary" onClick={() => send()}>
+                      다시 시도
+                    </button>
+                  )}
                   <button type="button" className="btn-secondary" onClick={() => setInquiryFor({ conversationId: current?.id ?? null, text: input })}>
                     담당자에게 문의
                   </button>
@@ -232,8 +257,45 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
               <Send className="h-5 w-5" />
             </button>
           </div>
+          <div className="mx-auto mt-1 flex max-w-4xl justify-between px-1 text-[11px] text-slate-400">
+            <span>이름·연락처 등 개인정보는 입력하지 마세요.</span>
+            {usage && usage.limit > 0 && (
+              <span className={usage.used >= usage.limit ? 'font-semibold text-red-500' : ''}>
+                오늘 질문 {usage.used}/{usage.limit}
+              </span>
+            )}
+          </div>
         </form>
       </section>
+
+      {piiFound && (
+        <Modal title={<><ShieldAlert className="h-4 w-4 text-amber-500" /> 개인정보가 포함되어 있습니다</>} onClose={() => setPiiFound(null)}>
+          <p className="text-sm text-slate-700 dark:text-slate-200">질문에 아래와 같은 개인정보로 보이는 값이 있습니다. 개인정보는 챗봇에 보낼 필요가 없습니다.</p>
+          <ul className="my-3 space-y-1 rounded-lg bg-slate-100 p-3 text-sm dark:bg-slate-900">
+            {piiFound.map((p, i) => (
+              <li key={i}>
+                <b>{p.kind}</b>: {p.text.slice(0, 3)}
+                {'*'.repeat(Math.max(3, p.text.length - 3))}
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-secondary" onClick={() => setPiiFound(null)}>
+              질문 고치기
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setPiiFound(null);
+                send(undefined, { masked: true });
+              }}
+            >
+              가리고 보내기
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {inquiryFor && (
         <InquiryModal

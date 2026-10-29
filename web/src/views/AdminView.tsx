@@ -1,4 +1,4 @@
-import { Database, Eye, FileSignature, History, Info, KeyRound, Lock, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
+import { Database, Eye, FileSignature, History, Info, KeyRound, Lock, Share2, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
@@ -15,8 +15,9 @@ import {
 import { MessageList } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
 import { KnowledgeTab } from './KnowledgeTab';
+import { ReferralTab } from './ReferralTab';
 
-type Tab = 'users' | 'knowledge' | 'conversations' | 'prompt' | 'system';
+type Tab = 'users' | 'knowledge' | 'referrals' | 'conversations' | 'prompt' | 'system';
 
 export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; onUsersChanged: () => void }) {
   const [tab, setTab] = useState<Tab>('users');
@@ -24,6 +25,7 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
   const tabs: { key: Tab; label: string; icon: typeof Users }[] = [
     { key: 'users', label: '사용자·권한', icon: Users },
     { key: 'knowledge', label: '지식 데이터', icon: Database },
+    { key: 'referrals', label: '연결 연락처', icon: Share2 },
     { key: 'conversations', label: '대화 열람', icon: Eye },
     { key: 'prompt', label: '프롬프트·면책 문구', icon: FileSignature },
     { key: 'system', label: '시스템 정보', icon: Info },
@@ -56,6 +58,7 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
           />
         )}
         {tab === 'knowledge' && <KnowledgeTab meta={meta} />}
+        {tab === 'referrals' && <ReferralTab meta={meta} />}
         {tab === 'conversations' && <ConversationsTab initialUser={viewUser} />}
         {tab === 'prompt' && <PromptTab />}
         {tab === 'system' && <SystemTab />}
@@ -550,6 +553,7 @@ function SystemTab() {
         </dl>
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">모델과 API 키는 보안을 위해 서버의 .env 파일에서만 바꿀 수 있습니다. 바꾼 뒤 서버를 다시 시작하세요.</p>
       </section>
+      <LimitSettings />
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {Object.entries(info.counts).map(([k, v]) => (
           <div key={k} className="card p-4 text-center">
@@ -559,5 +563,55 @@ function SystemTab() {
         ))}
       </section>
     </div>
+  );
+}
+
+function LimitSettings() {
+  const keys = [
+    { key: 'daily_limit_user', label: '사용자 1명당 하루 질문 수' },
+    { key: 'daily_limit_total', label: '전체 하루 질문 수' },
+  ];
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
+
+  useEffect(() => {
+    Promise.all(keys.map((k) => api<{ value: string }>(`/api/admin/settings/${k.key}`).then((r) => [k.key, r.value] as const))).then((pairs) => {
+      const v = Object.fromEntries(pairs);
+      setValues(v);
+      setSaved(v);
+    });
+  }, []);
+
+  async function save(key: string) {
+    setMessage(null);
+    try {
+      await api(`/api/admin/settings/${key}`, { method: 'PUT', body: { value: values[key] } });
+      setSaved((p) => ({ ...p, [key]: values[key] }));
+      setMessage({ kind: 'success', text: '저장했습니다.' });
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof ApiError ? err.message : '저장에 실패했습니다.' });
+    }
+  }
+
+  return (
+    <section className="card space-y-3 p-4">
+      <h3 className="font-bold text-slate-800 dark:text-slate-100">질문 상한 (비용 관리)</h3>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {keys.map((k) => (
+          <div key={k.key}>
+            <label className="label">{k.label}</label>
+            <div className="flex gap-2">
+              <input className="input" value={values[k.key] ?? ''} onChange={(e) => setValues((p) => ({ ...p, [k.key]: e.target.value }))} />
+              <button type="button" className="btn-secondary shrink-0" disabled={values[k.key] === saved[k.key]} onClick={() => save(k.key)}>
+                저장
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 dark:text-slate-400">한국 시간 0시에 초기화됩니다. 0으로 두면 제한하지 않습니다. 근거 없음·범위 외 판정처럼 AI를 부르지 않은 질문도 횟수에 포함됩니다.</p>
+      {message && <Notice kind={message.kind}>{message.text}</Notice>}
+    </section>
   );
 }

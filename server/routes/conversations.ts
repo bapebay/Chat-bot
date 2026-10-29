@@ -4,7 +4,9 @@ import { answerQuestion, listMessages, titleFromQuestion } from '../chat.js';
 import { BUSINESS_TYPES } from '../constants.js';
 import type { DB } from '../db.js';
 import type { KnowledgeBase } from '../knowledge/index.js';
+import { maskPii } from '../knowledge/text.js';
 import { LlmError, type LlmClient } from '../llm/index.js';
+import { limitExceeded, userUsage } from '../usage.js';
 import { idParam, str } from './util.js';
 
 interface ConversationRow {
@@ -91,8 +93,12 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
   app.post('/api/conversations/:id/messages', { preHandler: loggedIn }, async (req, reply) => {
     const conv = ownConversation(req.user.id, (req.params as { id: string }).id);
     if (!conv) return reply.code(404).send({ error: '대화를 찾을 수 없습니다.' });
-    const question = str(((req.body ?? {}) as Record<string, unknown>).content);
-    if (!question) return reply.code(400).send({ error: '질문을 입력해 주세요.' });
+    const raw = str(((req.body ?? {}) as Record<string, unknown>).content);
+    if (!raw) return reply.code(400).send({ error: '질문을 입력해 주세요.' });
+    // 화면에서 한 번 경고하지만, 서버도 저장·모델 전송 전에 개인정보 패턴을 항상 가린다
+    const question = maskPii(raw);
+    const limitMsg = limitExceeded(db, req.user.id);
+    if (limitMsg) return reply.code(429).send({ error: limitMsg, code: 'DAILY_LIMIT' });
     if (question.length > MAX_QUESTION_LENGTH) {
       return reply.code(400).send({ error: `질문은 ${MAX_QUESTION_LENGTH}자 이내로 입력해 주세요.` });
     }
@@ -111,6 +117,9 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
     return {
       conversation: db.prepare('SELECT * FROM conversations WHERE id = ?').get(conv.id),
       messages: listMessages(db, conv.id),
+      usage: userUsage(db, req.user.id),
     };
   });
+
+  app.get('/api/usage', { preHandler: loggedIn }, async (req) => userUsage(db, req.user.id));
 }

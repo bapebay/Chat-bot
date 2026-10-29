@@ -24,7 +24,15 @@ export class Bm25 {
     }
     const total = this.lengths.reduce((a, b) => a + b, 0);
     this.avgLen = this.docs.length ? Math.max(1, total / this.docs.length) : 1;
+    const idfs = [...this.df.keys()].map((t) => this.idf(t)).sort((a, b) => a - b);
+    this.unseenIdf = idfs.length ? idfs[Math.floor(idfs.length / 2)] : 1;
   }
+
+  /**
+   * 자료 어디에도 없는 낱말의 가중치. 그대로 IDF를 매기면 가장 무겁게 잡혀
+   * "연락 주세요" 같은 군더더기만으로 근거 판정이 떨어지므로, 보통 낱말 수준(중앙값)으로 둔다.
+   */
+  private unseenIdf = 1;
 
   get size() {
     return this.docs.length;
@@ -39,7 +47,7 @@ export class Bm25 {
   /** 모든 문서의 [bm25, coverage] */
   score(query: string): { bm25: number; coverage: number }[] {
     const qTokens = [...new Set(tokenize(query))].filter((t) => !QUERY_STOP_TOKENS.has(t));
-    const idfs = qTokens.map((t) => this.idf(t));
+    const idfs = qTokens.map((t) => (this.df.has(t) ? this.idf(t) : this.unseenIdf));
     const idfSum = idfs.reduce((a, b) => a + b, 0) || 1;
     return this.docs.map((tf, i) => {
       let bm25 = 0;
