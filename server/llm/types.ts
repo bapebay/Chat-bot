@@ -6,6 +6,8 @@ export interface ChatTurn {
 export interface LlmRequest {
   system: string;
   messages: ChatTurn[];
+  /** 주면 모델이 이 JSON 스키마에 맞는 JSON만 출력하도록 요청한다 */
+  jsonSchema?: Record<string, unknown>;
 }
 
 export interface LlmResult {

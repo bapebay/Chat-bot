@@ -1,4 +1,4 @@
-import { Eye, FileSignature, History, Info, KeyRound, Lock, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
+import { Database, Eye, FileSignature, History, Info, KeyRound, Lock, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
@@ -14,14 +14,16 @@ import {
 } from '../api';
 import { MessageList } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
+import { KnowledgeTab } from './KnowledgeTab';
 
-type Tab = 'users' | 'conversations' | 'prompt' | 'system';
+type Tab = 'users' | 'knowledge' | 'conversations' | 'prompt' | 'system';
 
 export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; onUsersChanged: () => void }) {
   const [tab, setTab] = useState<Tab>('users');
   const [viewUser, setViewUser] = useState<User | null>(null);
   const tabs: { key: Tab; label: string; icon: typeof Users }[] = [
     { key: 'users', label: '사용자·권한', icon: Users },
+    { key: 'knowledge', label: '지식 데이터', icon: Database },
     { key: 'conversations', label: '대화 열람', icon: Eye },
     { key: 'prompt', label: '프롬프트·면책 문구', icon: FileSignature },
     { key: 'system', label: '시스템 정보', icon: Info },
@@ -53,6 +55,7 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
             }}
           />
         )}
+        {tab === 'knowledge' && <KnowledgeTab meta={meta} />}
         {tab === 'conversations' && <ConversationsTab initialUser={viewUser} />}
         {tab === 'prompt' && <PromptTab />}
         {tab === 'system' && <SystemTab />}
@@ -414,7 +417,22 @@ function PromptTab() {
   );
 }
 
-function SettingEditor({ settingKey, title, help, rows }: { settingKey: string; title: string; help: string; rows: number }) {
+export function SettingEditor({
+  settingKey,
+  title,
+  help,
+  rows,
+  initialDraft,
+  allowEmpty = false,
+}: {
+  settingKey: string;
+  title: string;
+  help: string;
+  rows: number;
+  /** 파일에서 불러온 내용처럼, 저장 전 편집기에 미리 채워 둘 값 */
+  initialDraft?: string;
+  allowEmpty?: boolean;
+}) {
   const [value, setValue] = useState('');
   const [saved, setSaved] = useState('');
   const [revisions, setRevisions] = useState<SettingRevision[]>([]);
@@ -428,8 +446,11 @@ function SettingEditor({ settingKey, title, help, rows }: { settingKey: string; 
   };
 
   useEffect(() => {
-    api<{ value: string; revisions: SettingRevision[] }>(`/api/admin/settings/${settingKey}`).then(apply);
-  }, [settingKey]);
+    api<{ value: string; revisions: SettingRevision[] }>(`/api/admin/settings/${settingKey}`).then((res) => {
+      apply(res);
+      if (initialDraft !== undefined) setValue(initialDraft);
+    });
+  }, [settingKey, initialDraft]);
 
   async function save() {
     try {
@@ -466,7 +487,7 @@ function SettingEditor({ settingKey, title, help, rows }: { settingKey: string; 
           <button type="button" className="btn-secondary" disabled={value === saved} onClick={() => setValue(saved)}>
             취소
           </button>
-          <button type="button" className="btn-primary" disabled={value === saved || !value.trim()} onClick={save}>
+          <button type="button" className="btn-primary" disabled={value === saved || (!allowEmpty && !value.trim())} onClick={save}>
             저장
           </button>
         </div>

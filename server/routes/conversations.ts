@@ -3,6 +3,7 @@ import { requireRole } from '../auth.js';
 import { answerQuestion, listMessages, titleFromQuestion } from '../chat.js';
 import { BUSINESS_TYPES } from '../constants.js';
 import type { DB } from '../db.js';
+import type { KnowledgeBase } from '../knowledge/index.js';
 import { LlmError, type LlmClient } from '../llm/index.js';
 import { idParam, str } from './util.js';
 
@@ -17,7 +18,7 @@ interface ConversationRow {
 
 const MAX_QUESTION_LENGTH = 3000;
 
-export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient) {
+export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient, kb: KnowledgeBase) {
   const loggedIn = requireRole(db, 'user');
 
   function ownConversation(userId: number, rawId: unknown): ConversationRow | undefined {
@@ -98,7 +99,7 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient)
 
     const isFirst = !db.prepare('SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1').get(conv.id);
     try {
-      await answerQuestion(db, llm, conv.id, conv.business_type, question);
+      await answerQuestion(db, llm, kb, conv.id, conv.business_type, question);
     } catch (e) {
       req.log.error({ err: e }, 'AI 호출 실패');
       const detail = e instanceof LlmError ? e.message : 'AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.';

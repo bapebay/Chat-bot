@@ -4,13 +4,21 @@ import { buildApp } from './app.js';
 import { ensureInitialAdmin } from './auth.js';
 import { config } from './config.js';
 import { openDatabase } from './db.js';
+import { DEFAULT_MODELS_DIR, loadLocalEmbedder } from './knowledge/embedder.js';
+import { KnowledgeBase } from './knowledge/index.js';
+import { seedTemporaryKnowledge } from './knowledge/store.js';
 import { createLlmClient } from './llm/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const db = openDatabase();
 const llm = createLlmClient();
-const app = await buildApp({ db, llm, logger: true, webDir: path.resolve(here, '../web') });
+const log = (msg: string) => console.log(`[지식] ${msg}`);
+if (seedTemporaryKnowledge(db)) log('지식 데이터가 없어 프로토타입의 지침·FAQ 발췌본을 임시 문서로 넣었습니다.');
+const embedder = await loadLocalEmbedder(process.env.MODELS_DIR || DEFAULT_MODELS_DIR, log);
+const kb = new KnowledgeBase(db, embedder, log);
+kb.rebuild();
+const app = await buildApp({ db, llm, kb, logger: true, webDir: path.resolve(here, '../web') });
 
 ensureInitialAdmin(db, (msg) => app.log.warn(msg));
 if (llm.provider === 'mock') {

@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { buildApp } from './app.js';
 import { hashPassword } from './auth.js';
 import { openDatabase } from './db.js';
+import { KnowledgeBase } from './knowledge/index.js';
+import { seedTemporaryKnowledge } from './knowledge/store.js';
 import type { LlmClient } from './llm/index.js';
 
 const fakeLlm = (fail = false): LlmClient => ({
@@ -10,7 +12,11 @@ const fakeLlm = (fail = false): LlmClient => ({
   model: 'fake-1',
   async generate(req) {
     if (fail) throw new Error('boom');
-    return { text: `답변: ${req.messages.at(-1)!.content}`, provider: 'fake', model: 'fake-1', inputTokens: 10, outputTokens: 5 };
+    const ids = [...req.messages.at(-1)!.content.matchAll(/\[지침 (G\d+)/g)].map((m) => ({ id: m[1], clause: '', page: '' }));
+    return {
+      text: JSON.stringify({ answer_type: '근거답변', business_type: '공통', answer_markdown: `답변: ${req.messages.at(-1)!.content.slice(-40)}`, cited_qa_ids: [], cited_guideline: ids.slice(0, 1), referral: '없음' }),
+      provider: 'fake', model: 'fake-1', inputTokens: 10, outputTokens: 5,
+    };
   },
 });
 
@@ -20,7 +26,10 @@ async function setup(fail = false) {
     `INSERT INTO users (username, password_hash, org_type, org_name, region, business_type, role, status)
      VALUES ('admin', ?, '재단', '중앙앵커센터', '해당없음', '모름', 'admin', 'approved')`,
   ).run(hashPassword('adminpass1'));
-  const app = await buildApp({ db, llm: fakeLlm(fail) });
+  seedTemporaryKnowledge(db);
+  const kb = new KnowledgeBase(db, null);
+  await kb.rebuild();
+  const app = await buildApp({ db, llm: fakeLlm(fail), kb });
   return { db, app };
 }
 
@@ -69,7 +78,9 @@ test('가입 → 승인 전 로그인 불가 → 승인 후 질문·답변', asy
   const body = res.json();
   assert.equal(body.conversation.title, '보직수당 한도는 얼마인가요?');
   assert.equal(body.messages.length, 2);
-  assert.match(body.messages[1].content, /\[선택한 사업 유형: 글로컬\]/);
+  assert.match(body.messages[1].content, /보직수당 한도는 얼마인가요/);
+  assert.equal(body.messages[1].answer_type, '근거답변');
+  assert.equal(JSON.parse(body.messages[1].citations).guideline.length, 1);
   assert.match(body.messages[1].content, /상위보조사업자/); // 면책 문구 자동 추가
 
   // 일반 사용자는 관리자 API에 접근할 수 없다
@@ -120,7 +131,7 @@ test('AI 호출 실패 시 502, 질문은 저장되지 않음', async () => {
     method: 'POST',
     url: `/api/conversations/${conv.id}/messages`,
     headers: { cookie: admin },
-    payload: { content: '질문' },
+    payload: { content: '사업비 선결제가 가능한가요?' },
   });
   assert.equal(res.statusCode, 502);
   const detail = (await app.inject({ url: `/api/conversations/${conv.id}`, headers: { cookie: admin } })).json();

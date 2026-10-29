@@ -83,6 +83,71 @@ CREATE TABLE IF NOT EXISTS setting_revisions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_setting_revisions_key ON setting_revisions(key, id);
+
+-- 표준 Q&A: 엑셀 업로드 1회 = 버전 1개. status: draft(미리보기) / active(서비스 중) / archived
+CREATE TABLE IF NOT EXISTS qa_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  item_count INTEGER NOT NULL DEFAULT 0,
+  warnings TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  activated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS qa_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_id INTEGER NOT NULL REFERENCES qa_versions(id) ON DELETE CASCADE,
+  qa_id TEXT NOT NULL,
+  category1 TEXT NOT NULL DEFAULT '',
+  category2 TEXT NOT NULL DEFAULT '',
+  category3 TEXT NOT NULL DEFAULT '',
+  question TEXT NOT NULL,
+  checklist TEXT NOT NULL DEFAULT '',
+  answer TEXT NOT NULL,
+  referral_answer TEXT NOT NULL DEFAULT '',
+  is_referral INTEGER NOT NULL DEFAULT 0,
+  review_status TEXT NOT NULL DEFAULT '',
+  change_history TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_qa_items_version ON qa_items(version_id);
+
+CREATE TABLE IF NOT EXISTS out_of_scope (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT NOT NULL,
+  guidance TEXT NOT NULL DEFAULT '',
+  department TEXT NOT NULL DEFAULT ''
+);
+
+-- 지침·FAQ 원문. 조항 단위로 쪼개 guideline_chunks 에 저장
+CREATE TABLE IF NOT EXISTS guideline_docs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS guideline_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id INTEGER NOT NULL REFERENCES guideline_docs(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  clause TEXT NOT NULL DEFAULT '',
+  page INTEGER,
+  text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_guideline_chunks_doc ON guideline_chunks(doc_id, seq);
+
+-- 의미 검색용 벡터 캐시 (같은 문장은 다시 계산하지 않음)
+CREATE TABLE IF NOT EXISTS embeddings (
+  hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  vector BLOB NOT NULL,
+  PRIMARY KEY (hash, model)
+);
 `;
 
 export function openDatabase(file = config.databasePath): DB {

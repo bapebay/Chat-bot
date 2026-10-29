@@ -22,7 +22,10 @@ export function createClaudeClient(
       // 시스템 프롬프트는 매번 같으므로 캐시해 입력 비용을 줄인다
       system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
       messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
-      ...(effortValue ? { output_config: { effort: effortValue } } : {}),
+      output_config: {
+        ...(effortValue ? { effort: effortValue } : {}),
+        ...(req.jsonSchema ? { format: { type: 'json_schema' as const, schema: req.jsonSchema } } : {}),
+      },
     });
 
     if (response.stop_reason === 'refusal') {

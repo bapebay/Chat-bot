@@ -38,12 +38,49 @@ export interface Message {
   conversation_id: number;
   role: 'user' | 'assistant';
   content: string;
+  answer_type: AnswerType | null;
+  /** JSON 문자열 (Citations) */
+  citations: string | null;
   provider: string | null;
   model: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
   latency_ms: number | null;
   created_at: string;
+}
+
+export type AnswerType = '근거답변' | '연결형' | '답변범위외' | '근거없음';
+
+export interface Citations {
+  business_type: string | null;
+  referral: string | null;
+  qa: {
+    qa_id: string;
+    category1: string;
+    category2: string;
+    question: string;
+    answer: string;
+    referral_answer: string;
+    is_referral: boolean;
+    review_status: string;
+    change_history: string;
+  }[];
+  guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
+  out_of_scope: { question: string; guidance: string; department: string } | null;
+  retrieved?: {
+    mode: 'hybrid' | 'keyword';
+    qa: { qa_id: string; keyword: number; semantic: number | null; relevant: boolean }[];
+    guideline: { id: string; clause: string; keyword: number; semantic: number | null; relevant: boolean }[];
+  };
+}
+
+export function parseCitations(m: Message): Citations | null {
+  if (!m.citations) return null;
+  try {
+    return JSON.parse(m.citations) as Citations;
+  } catch {
+    return null;
+  }
 }
 
 export interface Inquiry {
@@ -84,11 +121,12 @@ export class ApiError extends Error {
 /** 서버 API 호출. 실패하면 서버가 준 한국어 메시지로 ApiError를 던진다 */
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   let res: Response;
+  const isForm = opts.body instanceof FormData;
   try {
     res = await fetch(path, {
       method: opts.method ?? (opts.body === undefined ? 'GET' : 'POST'),
-      headers: opts.body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      headers: opts.body === undefined || isForm ? undefined : { 'Content-Type': 'application/json' },
+      body: opts.body === undefined ? undefined : isForm ? (opts.body as FormData) : JSON.stringify(opts.body),
       credentials: 'same-origin',
     });
   } catch {

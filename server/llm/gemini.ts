@@ -18,7 +18,7 @@ export function createGeminiClient(apiKey: string, model: string, maxOutputToken
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       })),
-      generationConfig: { maxOutputTokens },
+      generationConfig: { maxOutputTokens, ...(req.jsonSchema ? { responseMimeType: 'application/json' } : {}) },
     });
 
     // 지수 백오프 재시도 (1s, 2s, 4s, 8s)

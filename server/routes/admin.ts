@@ -11,12 +11,18 @@ import { listMessages } from '../chat.js';
 import { config } from '../config.js';
 import { BUSINESS_TYPES, ORG_TYPES, REGIONS, ROLES, type Role } from '../constants.js';
 import type { DB } from '../db.js';
+import type { KnowledgeBase } from '../knowledge/index.js';
 import type { LlmClient } from '../llm/index.js';
-import { getRevision, getSetting, isSettingKey, listRevisions, setSetting } from '../settings.js';
+import { getRevision, getSetting, isSettingKey, listRevisions, setSetting, settingProblem } from '../settings.js';
 import { idParam, str } from './util.js';
 
-export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient) {
+export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowledge: KnowledgeBase) {
   const admin = requireRole(db, 'admin');
+
+  // 검색 대상이 바뀌는 설정이면 색인을 다시 만든다
+  function onKnowledgeChanged(key: string) {
+    if (key === 'include_unreviewed') knowledge.rebuild();
+  }
 
   function findUser(rawId: unknown): UserRow | undefined {
     const id = idParam(rawId);
@@ -144,9 +150,10 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient) {
     const key = (req.params as { key: string }).key;
     if (!isSettingKey(key)) return reply.code(404).send({ error: '알 수 없는 설정입니다.' });
     const value = str(((req.body ?? {}) as Record<string, unknown>).value);
-    if (!value) return reply.code(400).send({ error: '내용이 비어 있습니다.' });
-    if (value.length > 30000) return reply.code(400).send({ error: '내용이 너무 깁니다(30,000자 이내).' });
+    const problem = settingProblem(key, value);
+    if (problem) return reply.code(400).send({ error: problem });
     setSetting(db, key, value, req.user.id);
+    onKnowledgeChanged(key);
     return { value, revisions: listRevisions(db, key) };
   });
 
@@ -157,6 +164,7 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient) {
     const rev = revId ? getRevision(db, key, revId) : undefined;
     if (!rev) return reply.code(404).send({ error: '해당 이력을 찾을 수 없습니다.' });
     setSetting(db, key, rev.value, req.user.id);
+    onKnowledgeChanged(key);
     return { value: rev.value, revisions: listRevisions(db, key) };
   });
 

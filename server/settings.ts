@@ -5,6 +5,16 @@ import { DEFAULT_DISCLAIMER, DEFAULT_SYSTEM_PROMPT } from './defaults.js';
 export const EDITABLE_SETTINGS = {
   system_prompt: DEFAULT_SYSTEM_PROMPT,
   disclaimer: DEFAULT_DISCLAIMER,
+  // 답변 원칙: 한 줄에 한 항목. 매 질문 시스템 프롬프트에 함께 들어간다
+  principles: '',
+  // 'true'면 검수상태가 '확정'이 아닌 표준답안도 검색에 쓴다 (1단계 내부 시범용)
+  include_unreviewed: 'false',
+  // 근거로 인정할 최소 관련도. 키워드: 질문 핵심어가 답안에 들어 있는 비율(0~1), 의미: 문장 유사도(0~1)
+  threshold_keyword: '0.5',
+  threshold_semantic: '0.83',
+  // 모델에 넘기는 검색 결과 수
+  top_k_qa: '6',
+  top_k_guideline: '3',
 } as const;
 
 export type SettingKey = keyof typeof EDITABLE_SETTINGS;
@@ -13,9 +23,37 @@ export function isSettingKey(key: string): key is SettingKey {
   return Object.hasOwn(EDITABLE_SETTINGS, key);
 }
 
+/** 저장 전 값 검사. 문제가 없으면 null */
+export function settingProblem(key: SettingKey, value: string): string | null {
+  switch (key) {
+    case 'include_unreviewed':
+      return value === 'true' || value === 'false' ? null : 'true 또는 false 여야 합니다.';
+    case 'threshold_keyword':
+    case 'threshold_semantic': {
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 && n <= 1 ? null : '0과 1 사이의 숫자를 입력하세요.';
+    }
+    case 'top_k_qa':
+    case 'top_k_guideline': {
+      const n = Number(value);
+      return Number.isInteger(n) && n >= 1 && n <= 10 ? null : '1~10 사이의 정수를 입력하세요.';
+    }
+    case 'principles':
+      return value.length > 30000 ? '내용이 너무 깁니다(30,000자 이내).' : null;
+    default:
+      if (!value.trim()) return '내용이 비어 있습니다.';
+      return value.length > 30000 ? '내용이 너무 깁니다(30,000자 이내).' : null;
+  }
+}
+
 export function getSetting(db: DB, key: SettingKey): string {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
   return row ? row.value : EDITABLE_SETTINGS[key];
+}
+
+export function getNumberSetting(db: DB, key: SettingKey): number {
+  const n = Number(getSetting(db, key));
+  return Number.isFinite(n) ? n : Number(EDITABLE_SETTINGS[key]);
 }
 
 export function setSetting(db: DB, key: SettingKey, value: string, changedBy: number | null): void {
