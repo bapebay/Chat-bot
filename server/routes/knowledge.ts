@@ -21,7 +21,7 @@ import { idParam, str } from './util.js';
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 /** 업로드된 파일 1개와 함께 온 글자 필드를 읽는다 */
-async function readUpload(req: FastifyRequest, reply: FastifyReply, exts: RegExp) {
+export async function readUpload(req: FastifyRequest, reply: FastifyReply, exts: RegExp) {
   let file: MultipartFile | undefined;
   try {
     file = await req.file();
@@ -51,7 +51,7 @@ async function readUpload(req: FastifyRequest, reply: FastifyReply, exts: RegExp
   return { filename, buffer, fields };
 }
 
-function sendXlsx(reply: FastifyReply, buffer: Buffer, filename: string) {
+export function sendXlsx(reply: FastifyReply, buffer: Buffer, filename: string) {
   return reply
     .header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     .header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`)

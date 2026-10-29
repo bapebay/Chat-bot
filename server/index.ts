@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from './app.js';
+import { markInterruptedRuns } from './evaluation.js';
 import { ensureInitialAdmin } from './auth.js';
 import { config } from './config.js';
 import { openDatabase } from './db.js';
@@ -12,6 +13,7 @@ import { createLlmClient } from './llm/index.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const db = openDatabase();
+markInterruptedRuns(db);
 const llm = createLlmClient();
 const log = (msg: string) => console.log(`[지식] ${msg}`);
 if (seedTemporaryKnowledge(db)) log('지식 데이터가 없어 프로토타입의 지침·FAQ 발췌본을 임시 문서로 넣었습니다.');

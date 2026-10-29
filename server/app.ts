@@ -13,6 +13,7 @@ import { authRoutes } from './routes/auth.js';
 import { conversationRoutes } from './routes/conversations.js';
 import { inquiryRoutes } from './routes/inquiries.js';
 import { knowledgeRoutes, MAX_UPLOAD_BYTES } from './routes/knowledge.js';
+import { evaluationRoutes } from './routes/evaluation.js';
 import { referralRoutes, seedReferralContacts } from './routes/referrals.js';
 
 export interface BuildOptions {
@@ -42,6 +43,7 @@ export async function buildApp({ db, llm, kb, logger = false, webDir }: BuildOpt
   knowledgeRoutes(app, db, kb);
   seedReferralContacts(db);
   referralRoutes(app, db);
+  evaluationRoutes(app, db, llm, kb);
 
   // 배포 시: 빌드된 화면 파일을 함께 제공
   if (webDir && fs.existsSync(path.join(webDir, 'index.html'))) {

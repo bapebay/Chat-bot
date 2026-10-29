@@ -18,6 +18,8 @@ export const EDITABLE_SETTINGS = {
   // 하루 질문 상한 (0 = 제한 없음). 사용자 1명당 / 전체
   daily_limit_user: '50',
   daily_limit_total: '3000',
+  // 평가 통과 기준: 기대 표준답안 인용 비율(0~1). 잘못된 결론(검수자 표시)은 0건이어야 통과
+  eval_pass_hit_rate: '0.8',
 } as const;
 
 export type SettingKey = keyof typeof EDITABLE_SETTINGS;
@@ -32,7 +34,8 @@ export function settingProblem(key: SettingKey, value: string): string | null {
     case 'include_unreviewed':
       return value === 'true' || value === 'false' ? null : 'true 또는 false 여야 합니다.';
     case 'threshold_keyword':
-    case 'threshold_semantic': {
+    case 'threshold_semantic':
+    case 'eval_pass_hit_rate': {
       const n = Number(value);
       return Number.isFinite(n) && n >= 0 && n <= 1 ? null : '0과 1 사이의 숫자를 입력하세요.';
     }

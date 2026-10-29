@@ -179,7 +179,7 @@ function qaCard(d: QaDoc): Citations['qa'][number] {
   };
 }
 
-interface Answer {
+export interface Answer {
   text: string;
   answerType: AnswerType;
   citations: Citations;
@@ -204,7 +204,7 @@ function outOfScopeText(h: Hit<{ guidance: string; department: string }>): strin
   ].join('\n');
 }
 
-async function generateAnswer(
+export async function generateAnswer(
   db: DB,
   llm: LlmClient,
   kb: KnowledgeBase,

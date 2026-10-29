@@ -1,4 +1,4 @@
-import { Database, Eye, FileSignature, History, Info, KeyRound, Lock, Share2, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
+import { ClipboardCheck, Database, Eye, FileSignature, History, Info, KeyRound, Lock, Share2, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
@@ -14,10 +14,11 @@ import {
 } from '../api';
 import { MessageList } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
+import { EvalTab } from './EvalTab';
 import { KnowledgeTab } from './KnowledgeTab';
 import { ReferralTab } from './ReferralTab';
 
-type Tab = 'users' | 'knowledge' | 'referrals' | 'conversations' | 'prompt' | 'system';
+type Tab = 'users' | 'knowledge' | 'referrals' | 'eval' | 'conversations' | 'prompt' | 'system';
 
 export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; onUsersChanged: () => void }) {
   const [tab, setTab] = useState<Tab>('users');
@@ -26,6 +27,7 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
     { key: 'users', label: '사용자·권한', icon: Users },
     { key: 'knowledge', label: '지식 데이터', icon: Database },
     { key: 'referrals', label: '연결 연락처', icon: Share2 },
+    { key: 'eval', label: '평가', icon: ClipboardCheck },
     { key: 'conversations', label: '대화 열람', icon: Eye },
     { key: 'prompt', label: '프롬프트·면책 문구', icon: FileSignature },
     { key: 'system', label: '시스템 정보', icon: Info },
@@ -59,6 +61,7 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
         )}
         {tab === 'knowledge' && <KnowledgeTab meta={meta} />}
         {tab === 'referrals' && <ReferralTab meta={meta} />}
+        {tab === 'eval' && <EvalTab />}
         {tab === 'conversations' && <ConversationsTab initialUser={viewUser} />}
         {tab === 'prompt' && <PromptTab />}
         {tab === 'system' && <SystemTab />}

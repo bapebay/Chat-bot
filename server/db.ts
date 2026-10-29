@@ -152,6 +152,63 @@ CREATE TABLE IF NOT EXISTS referral_contacts (
   sort_order INTEGER NOT NULL DEFAULT 0
 );
 
+-- 평가 질문집: 질문 + 기대 통합번호 + 기대 유형
+CREATE TABLE IF NOT EXISTS eval_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  filename TEXT NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS eval_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  set_id INTEGER NOT NULL REFERENCES eval_sets(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  business_type TEXT NOT NULL DEFAULT '모름',
+  expected_qa_ids TEXT NOT NULL DEFAULT '[]',
+  expected_type TEXT,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_eval_items_set ON eval_items(set_id, seq);
+
+-- 평가 실행 1회. config: 실행 당시 모델·데이터 버전·기준값, summary: 점수
+CREATE TABLE IF NOT EXISTS eval_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  set_id INTEGER NOT NULL REFERENCES eval_sets(id) ON DELETE CASCADE,
+  label TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'running',
+  total INTEGER NOT NULL DEFAULT 0,
+  done INTEGER NOT NULL DEFAULT 0,
+  config TEXT NOT NULL DEFAULT '{}',
+  summary TEXT,
+  error TEXT,
+  started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  started_at TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS eval_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+  item_id INTEGER NOT NULL REFERENCES eval_items(id) ON DELETE CASCADE,
+  answer_type TEXT,
+  answer TEXT NOT NULL DEFAULT '',
+  cited_qa_ids TEXT NOT NULL DEFAULT '[]',
+  retrieved_qa_ids TEXT NOT NULL DEFAULT '[]',
+  cite_hit INTEGER,
+  retrieve_hit INTEGER,
+  type_match INTEGER,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  latency_ms INTEGER,
+  error TEXT,
+  verdict TEXT,
+  verdict_note TEXT NOT NULL DEFAULT '',
+  UNIQUE (run_id, item_id)
+);
+
 -- 의미 검색용 벡터 캐시 (같은 문장은 다시 계산하지 않음)
 CREATE TABLE IF NOT EXISTS embeddings (
   hash TEXT NOT NULL,
