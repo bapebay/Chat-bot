@@ -19,6 +19,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/models ./models
 COPY package.json ./
 # DB 파일은 /app/data 에 저장된다. 컨테이너를 지워도 남도록 볼륨으로 연결할 것
-VOLUME ["/app/data"]
+# 자동 백업은 /app/backups 에 쌓인다. 이것도 볼륨으로 연결할 것
+VOLUME ["/app/data", "/app/backups"]
 EXPOSE 3000
 CMD ["node", "dist/server/index.js"]

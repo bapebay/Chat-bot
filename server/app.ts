@@ -4,6 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
+import { config, type TrustProxy } from './config.js';
 import { BUSINESS_TYPES, ORG_TYPES, REGIONS } from './constants.js';
 import type { DB } from './db.js';
 import type { KnowledgeBase } from './knowledge/index.js';
@@ -17,6 +18,7 @@ import { adminOpsRoutes } from './routes/admin-ops.js';
 import { evaluationRoutes } from './routes/evaluation.js';
 import { operationsRoutes } from './routes/operations.js';
 import { referralRoutes, seedReferralContacts } from './routes/referrals.js';
+import { DEFAULT_RATE_RULES, rateLimit, securityHeaders, staffIpGuard } from './security.js';
 
 export interface BuildOptions {
   db: DB;
@@ -24,10 +26,27 @@ export interface BuildOptions {
   kb: KnowledgeBase;
   logger?: boolean;
   webDir?: string;
+  /** IP별 요청 횟수 제한 (실서비스는 켬, 테스트는 기본 끔) */
+  rateLimit?: boolean;
+  /** 관리 메뉴를 쓸 수 있는 IP·대역 (비우면 제한 없음) */
+  staffAllowedIps?: string[];
+  trustProxy?: TrustProxy;
 }
 
-export async function buildApp({ db, llm, kb, logger = false, webDir }: BuildOptions) {
-  const app = Fastify({ logger, bodyLimit: 1024 * 1024 });
+export async function buildApp({
+  db,
+  llm,
+  kb,
+  logger = false,
+  webDir,
+  rateLimit: limitRequests = false,
+  staffAllowedIps = [],
+  trustProxy = false,
+}: BuildOptions) {
+  const app = Fastify({ logger, bodyLimit: 1024 * 1024, trustProxy });
+  securityHeaders(app, { hsts: config.cookieSecure });
+  staffIpGuard(app, staffAllowedIps);
+  if (limitRequests) rateLimit(app, DEFAULT_RATE_RULES);
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
 

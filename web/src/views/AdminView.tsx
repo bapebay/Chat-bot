@@ -533,10 +533,68 @@ export function SettingEditor({
 
 // ================= 시스템 정보 =================
 
+type BackupInfo = { interval_hours: number; keep: number; count: number; latest: { name: string; size: number; created_at: string } | null };
+
+/** DB 백업 현황과 외부 공개용 보안 설정 상태 */
+function BackupSecurity({ backup, security }: { backup: BackupInfo; security: { rate_limit: boolean; staff_ip_limited: boolean; https_cookie: boolean } }) {
+  const [latest, setLatest] = useState(backup.latest);
+  const [count, setCount] = useState(backup.count);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const onOff = (on: boolean, yes: string, no: string) => (
+    <span className={on ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>{on ? yes : no}</span>
+  );
+  return (
+    <section className="card p-4">
+      <h3 className="mb-3 font-bold text-slate-800 dark:text-slate-100">백업·보안</h3>
+      <dl className="grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-3 dark:text-slate-200">
+        <dt className="text-slate-500">자동 백업</dt>
+        <dd className="sm:col-span-2">{backup.interval_hours ? `${backup.interval_hours}시간마다, 최근 ${backup.keep}개 보관` : onOff(false, '', '꺼짐 (BACKUP_INTERVAL_HOURS=0)')}</dd>
+        <dt className="text-slate-500">마지막 백업</dt>
+        <dd className="sm:col-span-2">
+          {latest ? `${new Date(latest.created_at).toLocaleString('ko-KR')} · ${(latest.size / 1024 / 1024).toFixed(1)}MB · 보관 ${count}개` : '아직 없음'}
+        </dd>
+        <dt className="text-slate-500">요청 횟수 제한</dt>
+        <dd className="sm:col-span-2">{onOff(security.rate_limit, '켜짐', '꺼짐 (외부 공개 시 켜야 합니다)')}</dd>
+        <dt className="text-slate-500">관리 메뉴 접근</dt>
+        <dd className="sm:col-span-2">{onOff(security.staff_ip_limited, '허용한 IP에서만', '어디서나 (ADMIN_ALLOWED_IPS 로 제한 가능)')}</dd>
+        <dt className="text-slate-500">HTTPS 전용 쿠키</dt>
+        <dd className="sm:col-span-2">{onOff(security.https_cookie, '켜짐', '꺼짐 (HTTPS 적용 후 COOKIE_SECURE=true)')}</dd>
+      </dl>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setMsg('');
+            try {
+              const r = await api<{ latest: BackupInfo['latest'] }>('/api/admin/backup', { body: {} });
+              setLatest(r.latest);
+              setCount((c) => Math.min(c + 1, backup.keep));
+              setMsg('백업을 만들었습니다.');
+            } catch (e) {
+              setMsg(e instanceof Error ? e.message : '백업하지 못했습니다.');
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? '백업 중…' : '지금 백업'}
+        </button>
+        <span className="text-xs text-slate-500 dark:text-slate-400">{msg || '서버 이전·업데이트 전에 한 번 눌러 두세요. 백업 파일은 서버의 백업 폴더에 저장됩니다.'}</span>
+      </div>
+    </section>
+  );
+}
+
 function SystemTab() {
   const [info, setInfo] = useState<{
     llm: { provider: string; model: string; history_messages: number; demo_tiers?: Record<string, string>; demo_tier?: string };
     counts: Record<string, number>;
+    backup?: BackupInfo;
+    security?: { rate_limit: boolean; staff_ip_limited: boolean; https_cookie: boolean };
   } | null>(null);
 
   useEffect(() => {
@@ -587,6 +645,7 @@ function SystemTab() {
         )}
       </section>
       {info.llm.demo_tiers !== undefined || info.llm.provider === 'demo' ? <DemoStorage /> : null}
+      {info.backup && info.security && <BackupSecurity backup={info.backup} security={info.security} />}
       <LimitSettings />
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {Object.entries(info.counts).map(([k, v]) => (

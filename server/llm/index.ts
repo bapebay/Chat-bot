@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { createClaudeClient } from './claude.js';
 import { createGeminiClient } from './gemini.js';
+import { createOpenAiClient } from './openai.js';
 import type { LlmClient, LlmRequest } from './types.js';
 
 export * from './types.js';
@@ -61,6 +62,16 @@ export function createLlmClient(): LlmClient {
   if (c.provider === 'claude') {
     if (!c.anthropicApiKey) throw new Error('LLM_PROVIDER=claude 인데 ANTHROPIC_API_KEY 가 비어 있습니다.');
     return createClaudeClient(c.anthropicApiKey, c.claudeModel, c.maxOutputTokens, c.claudeEffort);
+  }
+  if (c.provider === 'openai') {
+    if (!c.openaiModel) throw new Error('LLM_PROVIDER=openai 인데 OPENAI_MODEL 이 비어 있습니다.');
+    return createOpenAiClient({
+      baseUrl: c.openaiBaseUrl,
+      apiKey: c.openaiApiKey,
+      model: c.openaiModel,
+      maxOutputTokens: c.maxOutputTokens,
+      jsonMode: c.openaiJsonMode,
+    });
   }
   return createMockClient();
 }

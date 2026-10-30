@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { audit } from '../audit.js';
+import { backupDatabase, listBackups } from '../backup.js';
 import {
   deleteUserSessions,
   generateTempPassword,
@@ -182,6 +183,17 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
     return {
       llm: { provider: llm.provider, model: llm.model, history_messages: config.llm.historyMessages },
+      backup: {
+        interval_hours: config.backup.intervalHours,
+        keep: config.backup.keep,
+        latest: listBackups(config.backup.dir)[0] ?? null,
+        count: listBackups(config.backup.dir).length,
+      },
+      security: {
+        rate_limit: config.security.rateLimit,
+        staff_ip_limited: config.security.staffAllowedIps.length > 0,
+        https_cookie: config.cookieSecure,
+      },
       counts: {
         users: count('SELECT COUNT(*) AS n FROM users'),
         pending_users: count(`SELECT COUNT(*) AS n FROM users WHERE status = 'pending'`),
@@ -190,5 +202,12 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
         pending_inquiries: count(`SELECT COUNT(*) AS n FROM inquiries WHERE status = 'pending'`),
       },
     };
+  });
+
+  // 관리자가 지금 바로 백업 (이전·업데이트 직전 등)
+  app.post('/api/admin/backup', { preHandler: admin }, async (req) => {
+    const file = await backupDatabase(db, config.backup.dir, config.backup.keep);
+    audit(db, req.user, 'DB 백업', file.split(/[\\/]/).pop() ?? file);
+    return { ok: true, latest: listBackups(config.backup.dir)[0] ?? null };
   });
 }

@@ -10,6 +10,8 @@
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "reset-admin": "tsx server/scripts/reset-admin.ts",
+    "backup": "tsx server/scripts/backup.ts",
+    "restore": "tsx server/scripts/restore.ts",
     "test": "tsx --test server/**/*.test.ts",
     "download-model": "tsx server/scripts/download-model.ts",
     "build:demo": "node scripts/build-demo.mjs"

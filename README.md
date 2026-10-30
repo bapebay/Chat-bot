@@ -6,6 +6,7 @@
 - 기술 구성·단계별 계획: [`docs/PLAN.md`](docs/PLAN.md)
 - 기존 프로토타입(참고용): `docs/reference/smart_anchor_assistant.jsx`
 - **운영 설명서 (비개발자용): [`docs/운영설명서.md`](docs/운영설명서.md)**
+- **서버 이전·외부 공개 안내: [`docs/서버이전·외부공개.md`](docs/서버이전·외부공개.md)**
 
 ## 현재 진행 상황
 
@@ -116,7 +117,7 @@ npm run download-model   # 인터넷이 되는 곳에서 한 번 (models/ 폴더
 ## 운영 참고
 
 - **관리자 비밀번호를 잊었거나 관리자 계정이 잠겼을 때**: 서버에서 `npm run reset-admin -- admin` 실행 → 임시 비밀번호 발급
-- **데이터 백업**: DB는 `data/chatbot.db` 파일 하나입니다. 서버를 멈춘 뒤 이 파일(그리고 같은 폴더의 `-wal`, `-shm` 파일)을 복사하면 백업됩니다.
+- **데이터 백업**: DB는 `data/chatbot.db` 파일 하나입니다. 하루 한 번 `backups/` 에 자동 백업되고(14개 보관), 관리 → 시스템 정보 → '지금 백업'이나 `npm run backup` 으로 바로 만들 수 있습니다. 되살리기는 서비스를 멈춘 뒤 `npm run restore -- <백업 파일>`.
 - **비밀번호 규칙**: 8자 이상, 영문과 숫자 포함. 서버에는 해시로만 저장됩니다.
 - **로그인 유지 시간**: `.env`의 `SESSION_HOURS` (기본 8시간)
 
@@ -127,9 +128,9 @@ cp .env.example .env      # 값 채우기 (LLM_PROVIDER, API 키, 관리자 임�
 docker compose up -d --build
 ```
 
-데이터는 `./data` 폴더에 저장됩니다(백업 대상). 상태 확인: `http://서버주소:3000/api/health`
+데이터는 `./data`, 자동 백업은 `./backups` 폴더에 저장됩니다. 상태 확인: `http://서버주소:3000/api/health`
 
-브라우저에서 `http://서버주소:3000` 으로 접속합니다. HTTPS로 서비스할 때는 `.env`에 `COOKIE_SECURE=true`를 넣으세요.
+브라우저에서 `http://서버주소:3000` 으로 접속합니다. 외부에 공개할 때는 HTTPS·요청 제한·관리 메뉴 IP 제한 설정을 [`docs/서버이전·외부공개.md`](docs/서버이전·외부공개.md)의 점검표대로 맞추세요.
 
 ## 개발자용 명령
 
@@ -140,6 +141,7 @@ docker compose up -d --build
 | `npm test` | 서버 자동 테스트 |
 | `npm run typecheck` | 타입 검사 |
 | `npm run download-model` | 의미 검색 모델 내려받기 |
+| `npm run backup` / `npm run restore -- <파일>` | DB 백업 / 백업으로 되살리기(서비스 멈춘 뒤) |
 | `npm run build:demo` | 설치 없이 보는 데모 페이지(HTML 한 장) 만들기 |
 
-구성: React + Vite + Tailwind(화면), Node.js + Fastify(서버), SQLite(DB), Gemini/Claude 교체형 AI 연결(`server/llm/`), 검색(`server/knowledge/`: 한국어 바이그램 BM25 + multilingual-e5-small 의미 검색, 순위 융합).
+구성: React + Vite + Tailwind(화면), Node.js + Fastify(서버), SQLite(DB), Gemini/Claude/OpenAI 호환 교체형 AI 연결(`server/llm/`), 검색(`server/knowledge/`: 한국어 바이그램 BM25 + multilingual-e5-small 의미 검색, 순위 융합).
