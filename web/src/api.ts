@@ -21,6 +21,8 @@ export interface Meta {
   regions: string[];
   business_types: string[];
   test_mode: boolean;
+  /** 브라우저 안 가짜 서버로 도는 데모 페이지 */
+  demo?: boolean;
 }
 
 export interface Conversation {

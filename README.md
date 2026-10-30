@@ -20,6 +20,10 @@
 
 > 처음 실행하면 데이터가 없으므로 프로토타입에 들어 있던 지침·FAQ 발췌본이 ‘[임시]’ 문서로 들어갑니다. 실제 지침·FAQ를 올린 뒤 관리 → 지식 데이터 → 지침·FAQ 원문에서 ‘사용 중지’하거나 삭제하세요.
 
+## 설치 없이 둘러보기 (데모 페이지)
+
+`npm run build:demo` 를 실행하면 `dist-demo/anchor-chatbot-demo.html` 한 장짜리 데모가 만들어집니다. 실제 화면 코드에 **브라우저 안에서 도는 가짜 서버와 테스트 모델**(`web/src/demo/`)을 붙인 것으로, 가상 데이터로 사용자·검수자·관리자 화면을 모두 눌러 볼 수 있습니다 (파일 업로드·엑셀 받기는 안 됨, 새로고침하면 초기화). 검색은 실제 서버와 같은 키워드 검색 코드를 씁니다.
+
 ## 처음 실행하기 (내 컴퓨터에서 확인)
 
 필요한 것: [Node.js](https://nodejs.org) 20 이상 (LTS 버전 설치)
@@ -136,5 +140,6 @@ docker compose up -d --build
 | `npm test` | 서버 자동 테스트 |
 | `npm run typecheck` | 타입 검사 |
 | `npm run download-model` | 의미 검색 모델 내려받기 |
+| `npm run build:demo` | 설치 없이 보는 데모 페이지(HTML 한 장) 만들기 |
 
 구성: React + Vite + Tailwind(화면), Node.js + Fastify(서버), SQLite(DB), Gemini/Claude 교체형 AI 연결(`server/llm/`), 검색(`server/knowledge/`: 한국어 바이그램 BM25 + multilingual-e5-small 의미 검색, 순위 융합).

@@ -20,6 +20,7 @@ export function AuthPage({ meta, onLogin }: { meta: Meta; onLogin: (u: User) => 
             <Notice kind="success">{notice}</Notice>
           </div>
         )}
+        {meta.demo && mode === 'login' && <DemoLogin onLogin={onLogin} />}
         {mode === 'login' ? (
           <LoginForm onLogin={onLogin} />
         ) : (
@@ -150,5 +151,37 @@ function SignupForm({ meta, onDone }: { meta: Meta; onDone: (msg: string) => voi
         {busy ? '신청 중…' : '가입 신청'}
       </button>
     </form>
+  );
+}
+
+/** 데모 페이지: 역할별로 바로 로그인 */
+function DemoLogin({ onLogin }: { onLogin: (u: User) => void }) {
+  const roles = [
+    { username: 'user', label: '사용자', desc: '대학 담당자로 질문하기' },
+    { username: 'reviewer', label: '검수자', desc: '검토 대기함·표준답안 고치기' },
+    { username: 'admin', label: '관리자', desc: '데이터·평가·통계 둘러보기' },
+  ];
+  return (
+    <div className="mb-6 space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
+      <p className="text-sm font-bold text-indigo-900 dark:text-indigo-200">데모 페이지 · 가상 데이터와 테스트 모델로 동작합니다</p>
+      <p className="text-xs text-indigo-800 dark:text-indigo-300">역할을 골라 바로 들어가 보세요. 새로고침하면 처음 상태로 돌아갑니다.</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {roles.map((r) => (
+          <button
+            key={r.username}
+            type="button"
+            className="rounded-lg border border-indigo-200 bg-white p-2.5 text-left hover:border-indigo-400 dark:border-indigo-800 dark:bg-slate-900"
+            onClick={async () => {
+              const { user } = await api<{ user: User }>('/api/auth/login', { body: { username: r.username, password: 'demo1234' } });
+              onLogin(user);
+            }}
+          >
+            <span className="block text-sm font-bold text-slate-800 dark:text-slate-100">{r.label}</span>
+            <span className="block text-[11px] text-slate-500 dark:text-slate-400">{r.desc}</span>
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-indigo-700 dark:text-indigo-300">직접 입력할 때: 아이디 user / reviewer / admin, 비밀번호 demo1234</p>
+    </div>
   );
 }

@@ -11,7 +11,8 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "reset-admin": "tsx server/scripts/reset-admin.ts",
     "test": "tsx --test server/**/*.test.ts",
-    "download-model": "tsx server/scripts/download-model.ts"
+    "download-model": "tsx server/scripts/download-model.ts",
+    "build:demo": "node scripts/build-demo.mjs"
   },
   "engines": {
     "node": ">=20"
