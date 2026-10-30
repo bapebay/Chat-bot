@@ -87,7 +87,8 @@ function addUser(u: Partial<Json>) {
 }
 const admin = addUser({ username: 'admin', role: 'admin', org_type: '재단', org_name: '중앙앵커센터', region: '해당없음' });
 addUser({ username: 'reviewer', role: 'reviewer', org_type: '재단', org_name: '중앙앵커센터', region: '해당없음' });
-const user = addUser({ username: 'user', role: 'user', org_type: '대학', org_name: '가상대학교 산학협력단', region: '부산', business_type: '글로컬' });
+// 데모 사용자는 사업 유형 '모름'으로 질문하는 상태가 기본 (요청에 따라 고정)
+const user = addUser({ username: 'user', role: 'user', org_type: '대학', org_name: '가상대학교 산학협력단', region: '부산', business_type: '모름' });
 const others = [
   addUser({ username: 'center_daegu', role: 'user', org_type: '지역앵커센터', org_name: '대구 지역앵커센터(가상)', region: '대구' }),
   addUser({ username: 'univ_gw', role: 'user', org_type: '대학', org_name: '가상과학기술대학교', region: '강원', business_type: '순수앵커' }),
@@ -1367,6 +1368,9 @@ export function importState(st: Json): void {
   for (const [k, list] of Object.entries(LISTS) as [string, Json[]][]) {
     if (Array.isArray(st[k])) list.splice(0, list.length, ...st[k]);
   }
+  // 예전에 저장된 데이터에서도 데모 사용자의 기본 사업 유형은 '모름'
+  const demoUser = users.find((u) => u.username === 'user');
+  if (demoUser) demoUser.business_type = '모름';
   for (const r of evalRuns) {
     if (r.status === 'running') Object.assign(r, { status: 'cancelled', error: '페이지를 닫아 중단되었습니다.', summary: summarize(r.id) });
   }
