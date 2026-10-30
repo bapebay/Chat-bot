@@ -535,7 +535,7 @@ export function SettingEditor({
 
 function SystemTab() {
   const [info, setInfo] = useState<{
-    llm: { provider: string; model: string; history_messages: number };
+    llm: { provider: string; model: string; history_messages: number; demo_tiers?: Record<string, string>; demo_tier?: string };
     counts: Record<string, number>;
   } | null>(null);
 
@@ -563,7 +563,28 @@ function SystemTab() {
           <dt className="text-slate-500">함께 보내는 최근 대화</dt>
           <dd className="sm:col-span-2">{info.llm.history_messages}개 메시지</dd>
         </dl>
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">모델과 API 키는 보안을 위해 서버의 .env 파일에서만 바꿀 수 있습니다. 바꾼 뒤 서버를 다시 시작하세요.</p>
+        {info.llm.demo_tiers ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-600 dark:text-slate-300">데모 AI 등급</span>
+            <select
+              className="rounded border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-900"
+              value={info.llm.demo_tier}
+              onChange={async (e) => {
+                await api('/api/admin/settings/demo_model_tier', { method: 'PUT', body: { value: e.target.value } });
+                setInfo(await api('/api/admin/system'));
+              }}
+            >
+              {Object.entries(info.llm.demo_tiers).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-slate-500 dark:text-slate-400">실서비스 기본값은 경량 모델이라 ‘빠름’과 비슷합니다.</span>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">모델과 API 키는 보안을 위해 서버의 .env 파일에서만 바꿀 수 있습니다. 바꾼 뒤 서버를 다시 시작하세요.</p>
+        )}
       </section>
       <LimitSettings />
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">

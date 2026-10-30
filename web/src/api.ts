@@ -23,6 +23,8 @@ export interface Meta {
   test_mode: boolean;
   /** 브라우저 안 가짜 서버로 도는 데모 페이지 */
   demo?: boolean;
+  /** 데모 페이지에서 실제 AI(claude.ai)가 연결되었는지 */
+  demo_ai?: boolean;
 }
 
 export interface Conversation {

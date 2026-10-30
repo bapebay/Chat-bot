@@ -3,6 +3,7 @@
    AI 대신 '테스트 모델'이 검색된 표준답안으로 답을 만든다. 새로고침하면 처음 상태로 돌아간다. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Bm25 } from '../../../server/knowledge/bm25';
+import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS } from '../../../server/defaults';
 import { maskPii } from '../../../server/knowledge/text';
 import { DEMO_EVAL_ITEMS, DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, DEMO_QA, REGIONS_17, type DemoQa } from './data';
 
@@ -31,9 +32,20 @@ const round = (n: number) => Math.round(n * 1000) / 1000;
 const BUSINESS_TYPES = ['순수앵커', '글로컬', '의대교육', '초광역', '기타', '모름'];
 const REGIONS = [...REGIONS_17, '해당없음'];
 
+// ================= 실제 AI (claude.ai 아티팩트의 sample 기능) =================
+// 데모 페이지를 claude.ai에서 열면 보는 사람의 Claude 계정으로 실제 AI를 부를 수 있다.
+// 못 쓰면(권한 거절, 다른 곳에서 열람) null → 테스트 모델로 답한다.
+type SampleFn = ((input: string, opts?: Record<string, unknown>) => Promise<{ text: string }>) | null;
+let ai: SampleFn = null;
+export function setAi(fn: SampleFn) {
+  ai = fn;
+}
+export const aiAvailable = () => !!ai;
+const TIER_LABEL: Record<string, string> = { quick: '빠름 (Haiku급)', default: '균형 (Sonnet급)', complex: '최고 성능 (Opus급)' };
+
 // ================= 상태 =================
 const settings: Record<string, string> = {
-  system_prompt: '# 역할\n너는 한국연구재단 중앙앵커센터의 \'앵커 사업비 지침 안내 챗봇\'이다.\n(데모) 실제 서비스의 기본 프롬프트와 같은 구조입니다. 고쳐서 저장하면 변경 이력이 남습니다.',
+  system_prompt: DEFAULT_SYSTEM_PROMPT,
   disclaimer: '본 답변은 사업비 지침과 기존 질의응답에 근거한 안내이며, 구체적인 집행 인정 여부는 상위보조사업자(지역앵커센터)의 판단에 따릅니다.',
   principles: DEMO_PRINCIPLES,
   include_unreviewed: 'false',
@@ -48,6 +60,8 @@ const settings: Record<string, string> = {
   price_output_per_mtok: '0.50',
   usd_krw: '1400',
   retention_days: '0',
+  // 데모 전용: 실제 AI 등급 (실서비스 기본값인 경량 모델과 맞춰 quick)
+  demo_model_tier: 'quick',
 };
 const revisions: { id: number; key: string; value: string; changed_by: string; created_at: string }[] = [];
 
@@ -213,6 +227,7 @@ function generateAnswer(history: Json[], businessType: string, question: string)
       answerType: '답변범위외',
       citations: { ...base, referral: '담당자', out_of_scope: { question: o.question, guidance: o.guidance, department: o.department } },
       model: false,
+      r,
     };
   }
   if (!r.passed) {
@@ -221,6 +236,7 @@ function generateAnswer(history: Json[], businessType: string, question: string)
       answerType: '근거없음',
       citations: { ...base, referral: '담당자' },
       model: false,
+      r,
     };
   }
   const relQa = r.qa.filter((h: Json) => h.relevant);
@@ -264,15 +280,126 @@ function generateAnswer(history: Json[], businessType: string, question: string)
       guideline: citedGuide.map((c: Json) => ({ id: c.id, doc_name: c.doc_name, doc_kind: c.doc_kind, clause: c.clause, page: c.page, text: c.text })),
     },
     model: true,
+    r,
+  };
+}
+
+// ----- 실제 AI 답변: 실서비스(server/chat.ts)와 같은 프롬프트·근거 형식·출력 규칙 -----
+const clean = (s: string) => s.replace(/[|\]]/g, '/');
+function buildContext(r: Json): string {
+  const parts: string[] = [];
+  for (const h of r.qa) {
+    const d = h.doc;
+    parts.push(
+      [
+        `[표준답안 통합번호: ${clean(d.qa_id)} | 대분류: ${clean(d.category1) || '-'} | 중분류: ${clean(d.category2) || '-'} | 연결형: ${d.is_referral ? '예' : '아니오'}]`,
+        `대표 질의: ${d.question}`,
+        d.checklist ? `요지: ${d.checklist}` : '',
+        `통합 답안: ${d.answer}`,
+        d.referral_answer ? `연결형 답변: ${d.referral_answer}` : '',
+        d.change_history ? `답변 변경 이력: ${d.change_history}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+  r.guideline.forEach((h: Json, i: number) => parts.push(`[지침 G${i + 1} | ${clean(h.doc.clause)} | 문서: ${clean(h.doc.doc_name)} | 쪽: ${h.doc.page ?? ''}]\n${h.doc.text}`));
+  return parts.join('\n\n');
+}
+function parseModelJson(text: string): Json | null {
+  const a = text.indexOf('{');
+  const b = text.lastIndexOf('}');
+  if (a < 0 || b <= a) return null;
+  try {
+    return JSON.parse(text.slice(a, b + 1));
+  } catch {
+    return null;
+  }
+}
+const PERMANENT = ['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'];
+const AI_ERROR: Record<string, string> = {
+  rate_limited: 'AI 사용 한도에 걸렸습니다. 잠시 후 다시 시도해 주세요.',
+  session_expired: 'claude.ai 로그인이 만료되었습니다. 다시 로그인해 주세요.',
+  refused: 'AI가 이 질문에 대한 답변을 거절했습니다. 질문을 바꿔 주세요.',
+  empty_completion: 'AI가 빈 답변을 돌려주었습니다. 다시 시도해 주세요.',
+  prompt_too_large: '보낼 내용이 너무 깁니다.',
+};
+
+/** 근거 판정은 테스트 모델과 같고, 답을 만드는 단계만 실제 AI가 한다 */
+async function answerWithAi(history: Json[], businessType: string, question: string) {
+  const t = generateAnswer(history, businessType, question);
+  const testResult = { ...t, provider: 'demo', modelName: 'test-model', latency: 900 + Math.round(Math.random() * 600) };
+  if (!t.model || !ai) return testResult;
+  const r = t.r;
+  const principles = settings.principles.trim();
+  const system = [settings.system_prompt, principles ? `# 답변 원칙 (담당자가 검수하며 정한 기준, 항상 지킨다)\n${principles}` : '', OUTPUT_INSTRUCTIONS]
+    .filter(Boolean)
+    .join('\n\n');
+  let recent = history.slice(-6);
+  while (recent.length && recent[0].role !== 'user') recent = recent.slice(1);
+  const hist = recent.map((m) => `${m.role === 'user' ? '사용자' : '챗봇'}: ${stripDisclaimer(m.content)}`).join('\n\n');
+  const input = `${system}\n\n# 이전 대화\n${hist || '(없음)'}\n\n[근거 자료]\n${buildContext(r)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n[질문]\n${question}`;
+  const started = Date.now();
+  let text: string;
+  try {
+    ({ text } = await ai(input, { cache: false, modelTier: settings.demo_model_tier }));
+  } catch (e) {
+    const code = (e as { code?: string })?.code ?? 'upstream_error';
+    if (PERMANENT.includes(code)) {
+      ai = null; // 이번 열람에서는 테스트 모델로
+      return { ...testResult, text: `${testResult.text}\n\n_(실제 AI 사용이 허용되지 않아 테스트 모델로 답했습니다)_` };
+    }
+    throw new HttpError(502, AI_ERROR[code] ?? 'AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.', 'LLM_FAILED');
+  }
+  const latency = Date.now() - started;
+  const usage = { provider: 'claude.ai', modelName: `Claude ${TIER_LABEL[settings.demo_model_tier] ?? ''}`, latency, inputTokens: Math.round(input.length / 1.5), outputTokens: Math.round(text.length / 1.5) };
+  const json = parseModelJson(text);
+  if (!json || typeof json.answer_markdown !== 'string' || !json.answer_markdown.trim()) {
+    return { ...t, ...usage, text: text.trim(), answerType: '근거답변', citations: { ...t.citations, qa: [], guideline: [] } };
+  }
+  const citedQa = new Set((Array.isArray(json.cited_qa_ids) ? json.cited_qa_ids : []).map(String));
+  const citedG = new Set((Array.isArray(json.cited_guideline) ? json.cited_guideline : []).map((g: Json) => String(g?.id ?? '')));
+  let answerType = ['근거답변', '연결형', '답변범위외', '근거없음'].includes(json.answer_type) ? json.answer_type : '근거답변';
+  let referral = ['지역앵커센터', '대학규정', 'e나라도움', '교육부', '담당자'].includes(json.referral) ? json.referral : null;
+  const citedDocs = r.qa.filter((h: Json) => citedQa.has(h.doc.qa_id));
+  if (answerType === '근거답변' && citedDocs.length && citedDocs.every((h: Json) => h.doc.is_referral)) answerType = '연결형';
+  if (answerType === '근거답변') referral = null;
+  else if (!referral) referral = answerType === '연결형' ? '지역앵커센터' : '담당자';
+  return {
+    ...usage,
+    text: json.answer_markdown.trim(),
+    answerType,
+    model: true,
+    r,
+    citations: {
+      ...t.citations,
+      business_type: typeof json.business_type === 'string' ? json.business_type : null,
+      referral,
+      qa: citedDocs.map((h: Json) => ({
+        qa_id: h.doc.qa_id,
+        category1: h.doc.category1,
+        category2: h.doc.category2,
+        question: h.doc.question,
+        answer: h.doc.answer,
+        referral_answer: h.doc.referral_answer,
+        is_referral: !!h.doc.is_referral,
+        review_status: h.doc.review_status,
+        change_history: h.doc.change_history,
+      })),
+      guideline: r.guideline
+        .map((h: Json, i: number) => ({ h, id: `G${i + 1}` }))
+        .filter(({ id }: Json) => citedG.has(id))
+        .map(({ h, id }: Json) => ({ id, doc_name: h.doc.doc_name, doc_kind: h.doc.doc_kind, clause: h.doc.clause, page: h.doc.page, text: h.doc.text })),
+    },
   };
 }
 
 const SEP = '\n\n---\n\n> ';
 const stripDisclaimer = (c: string) => (c.lastIndexOf(SEP) >= 0 ? c.slice(0, c.lastIndexOf(SEP)) : c);
 
-function storeAnswer(conv: Json, question: string, createdAt = ts()) {
+function storeAnswer(conv: Json, question: string, createdAt = ts(), given?: Json) {
   const history = messages.filter((m) => m.conversation_id === conv.id);
-  const a = generateAnswer(history, conv.business_type, question);
+  const a = given ?? { ...generateAnswer(history, conv.business_type, question), provider: 'demo', modelName: 'test-model' };
   messages.push({ id: nextId(), conversation_id: conv.id, role: 'user', content: question, answer_type: null, citations: null, provider: null, model: null, input_tokens: null, output_tokens: null, latency_ms: null, created_at: createdAt });
   const msg = {
     id: nextId(),
@@ -281,11 +408,11 @@ function storeAnswer(conv: Json, question: string, createdAt = ts()) {
     content: `${a.text}${SEP}${settings.disclaimer}`,
     answer_type: a.answerType,
     citations: JSON.stringify(a.citations),
-    provider: a.model ? 'demo' : null,
-    model: a.model ? 'test-model' : null,
-    input_tokens: a.model ? 3500 + question.length * 2 : null,
-    output_tokens: a.model ? Math.round(a.text.length / 1.5) : null,
-    latency_ms: a.model ? 900 + Math.round(Math.random() * 600) : 40,
+    provider: a.model ? a.provider : null,
+    model: a.model ? a.modelName : null,
+    input_tokens: a.model ? (a.inputTokens ?? 3500 + question.length * 2) : null,
+    output_tokens: a.model ? (a.outputTokens ?? Math.round(a.text.length / 1.5)) : null,
+    latency_ms: a.model ? (a.latency ?? 1000) : 40,
     created_at: createdAt,
   };
   messages.push(msg);
@@ -387,6 +514,10 @@ function runEval(setId: number, label: string) {
     finished_at: null,
   };
   evalRuns.push(run);
+  if (ai) {
+    void runEvalWithAi(run, items);
+    return run;
+  }
   for (const it of items) {
     const a = generateAnswer([], it.business_type, it.question);
     const cited = a.citations.qa.map((q: Json) => q.qa_id);
@@ -424,6 +555,48 @@ function runEval(setId: number, label: string) {
   return run;
 }
 
+function evalRow(run: Json, it: Json, a: Json, error: string | null = null) {
+  const cited = a ? a.citations.qa.map((q: Json) => q.qa_id) : [];
+  const retrieved = a ? a.citations.retrieved.qa.map((q: Json) => q.qa_id) : [];
+  const exp = it.expected_qa_ids as string[];
+  return {
+    id: nextId(),
+    run_id: run.id,
+    item_id: it.id,
+    answer_type: a?.answerType ?? null,
+    answer: a?.text ?? '',
+    cited_qa_ids: cited,
+    retrieved_qa_ids: retrieved,
+    cite_hit: exp.length ? Number(exp.some((x) => cited.includes(x))) : null,
+    retrieve_hit: exp.length ? Number(exp.some((x) => retrieved.includes(x))) : null,
+    type_match: it.expected_type ? Number(!!a && it.expected_type === a.answerType) : null,
+    input_tokens: a?.inputTokens ?? null,
+    output_tokens: a?.outputTokens ?? null,
+    latency_ms: a?.latency ?? null,
+    error,
+    verdict: null,
+    verdict_note: '',
+  };
+}
+
+/** 실제 AI로 평가: 한 문항씩 차례로 부른다 (한꺼번에 부르면 사용 한도에 걸림) */
+async function runEvalWithAi(run: Json, items: Json[]) {
+  run.config.provider = 'claude.ai';
+  run.config.model = `Claude ${TIER_LABEL[settings.demo_model_tier] ?? ''}`;
+  for (const it of items) {
+    if (run.status !== 'running') break;
+    try {
+      evalResults.push(evalRow(run, it, await answerWithAi([], it.business_type, it.question)));
+    } catch (e) {
+      evalResults.push(evalRow(run, it, null, (e as Error).message));
+    }
+    run.done++;
+  }
+  if (run.status === 'running') run.status = 'done';
+  run.finished_at = ts();
+  run.summary = summarize(run.id);
+}
+
 function summarize(runId: number) {
   const rows = evalResults.filter((r) => r.run_id === runId).map((r) => ({ ...r, expected_type: evalItems.find((i) => i.id === r.item_id)?.expected_type }));
   const rate = (n: number, d: number) => (d ? round(n / d) : null);
@@ -435,10 +608,10 @@ function summarize(runId: number) {
   const wrong = rows.filter((r) => r.verdict === 'wrong').length;
   const unreviewed = rows.filter((r) => r.answer_type === '근거답변' && !r.verdict).length;
   const passHit = num('eval_pass_hit_rate');
-  const scoreOk = citeRate !== null && citeRate >= passHit && wrong === 0;
+  const scoreOk = citeRate !== null && citeRate >= passHit && wrong === 0 && rows.every((r) => !r.error);
   return {
     total: rows.length,
-    errors: 0,
+    errors: rows.filter((r) => r.error).length,
     cite_hit_rate: citeRate,
     cite_hit: cite.filter((r) => r.cite_hit).length,
     cite_total: cite.length,
@@ -473,7 +646,7 @@ function summarize(runId: number) {
 }
 
 // ================= 라우터 =================
-type Handler = (p: { params: string[]; body: Json; query: URLSearchParams; me: Json }) => Json;
+type Handler = (p: { params: string[]; body: Json; query: URLSearchParams; me: Json }) => Json | Promise<Json>;
 const routes: { method: string; re: RegExp; role: 'none' | 'user' | 'reviewer' | 'admin'; handler: Handler }[] = [];
 const route = (method: string, path: string, role: 'none' | 'user' | 'reviewer' | 'admin', handler: Handler) =>
   routes.push({ method, re: new RegExp(`^${path.replace(/:\w+/g, '([^/]+)')}$`), role, handler });
@@ -485,7 +658,7 @@ const pub = (u: Json) => {
 const byId = <T extends { id: number }>(list: T[], id: string | number) => list.find((x) => x.id === Number(id));
 const UPLOAD_MSG = '데모 페이지에서는 파일을 올릴 수 없습니다. 미리 넣어 둔 가상 데이터로 둘러보세요. (실제 서비스에서는 엑셀·PDF 업로드가 됩니다)';
 
-route('GET', '/api/meta', 'none', () => ({ org_types: ['재단', '지역앵커센터', '대학'], regions: REGIONS, business_types: BUSINESS_TYPES, test_mode: true, demo: true }));
+route('GET', '/api/meta', 'none', () => ({ org_types: ['재단', '지역앵커센터', '대학'], regions: REGIONS, business_types: BUSINESS_TYPES, test_mode: !ai, demo: true, demo_ai: !!ai }));
 route('GET', '/api/health', 'none', () => ({ ok: true }));
 
 // ----- 인증 -----
@@ -551,7 +724,7 @@ route('DELETE', '/api/conversations/:id', 'user', ({ me, params }) => {
   conversations.splice(conversations.indexOf(c), 1);
   return { ok: true };
 });
-route('POST', '/api/conversations/:id/messages', 'user', ({ me, params, body }) => {
+route('POST', '/api/conversations/:id/messages', 'user', async ({ me, params, body }) => {
   const c = ownConv(me, params[0]);
   const raw = String(body.content ?? '').trim();
   if (!raw) throw new HttpError(400, '질문을 입력해 주세요.');
@@ -559,7 +732,8 @@ route('POST', '/api/conversations/:id/messages', 'user', ({ me, params, body }) 
   if (u.limit > 0 && u.used >= u.limit) throw new HttpError(429, `오늘 질문 가능 횟수(${u.limit}회)를 모두 사용했습니다. 내일 다시 이용하시거나 1:1 문의를 이용해 주세요.`, 'DAILY_LIMIT');
   const question = maskPii(raw);
   const first = !messages.some((m) => m.conversation_id === c.id);
-  storeAnswer(c, question);
+  const a = await answerWithAi(messages.filter((m) => m.conversation_id === c.id), c.business_type, question);
+  storeAnswer(c, question, ts(), a);
   if (first) c.title = titleOf(question);
   return { conversation: c, messages: messages.filter((m) => m.conversation_id === c.id), usage: usage(me) };
 });
@@ -788,7 +962,9 @@ route('POST', '/api/admin/settings/:key/revert', 'admin', ({ me, params, body })
   return { value: rev.value, revisions: revList(params[0]) };
 });
 route('GET', '/api/admin/system', 'admin', () => ({
-  llm: { provider: 'demo', model: 'test-model (데모 테스트 모델)', history_messages: 6 },
+  llm: ai
+    ? { provider: 'claude.ai (실제 AI)', model: `Claude ${TIER_LABEL[settings.demo_model_tier] ?? ''}`, history_messages: 6, demo_tiers: TIER_LABEL, demo_tier: settings.demo_model_tier }
+    : { provider: 'demo', model: 'test-model (데모 테스트 모델)', history_messages: 6 },
   counts: {
     users: users.length,
     pending_users: users.filter((u) => u.status === 'pending').length,
@@ -902,10 +1078,9 @@ route('GET', '/api/admin/eval/runs/:id', 'admin', ({ params }) => {
   const items = evalItems.filter((i) => i.set_id === run.set_id).sort((a, b) => a.seq - b.seq);
   const results = items
     .slice(0, run.done)
-    .map((i) => {
-      const r = evalResults.find((x) => x.run_id === run.id && x.item_id === i.id);
-      return { ...r, seq: i.seq, question: i.question, business_type: i.business_type, expected_qa_ids: i.expected_qa_ids, expected_type: i.expected_type, note: i.note };
-    });
+    .map((i) => ({ i, r: evalResults.find((x) => x.run_id === run.id && x.item_id === i.id) }))
+    .filter(({ r }) => r)
+    .map(({ i, r }) => ({ ...r, seq: i.seq, question: i.question, business_type: i.business_type, expected_qa_ids: i.expected_qa_ids, expected_type: i.expected_type, note: i.note }));
   return { run: { ...run, summary: run.status === 'running' ? summarize(run.id) : run.summary }, results };
 });
 route('POST', '/api/admin/eval/runs/:id/cancel', 'admin', ({ params }) => {
@@ -1052,9 +1227,9 @@ export async function handle(method: string, url: string, body: Json): Promise<{
     if (LEVEL[me.role as keyof typeof LEVEL] < LEVEL[r.role]) return { status: 403, data: { error: '권한이 없습니다.' } };
   }
   // 질문 답변은 실제처럼 잠깐 기다렸다 보낸다
-  if (/\/messages$/.test(u.pathname) && method === 'POST') await new Promise((res) => setTimeout(res, 700));
+  if (/\/messages$/.test(u.pathname) && method === 'POST' && !ai) await new Promise((res) => setTimeout(res, 700));
   try {
-    return { status: 200, data: r.handler({ params: u.pathname.match(r.re)!.slice(1), body: body ?? {}, query: u.searchParams, me }) };
+    return { status: 200, data: await r.handler({ params: u.pathname.match(r.re)!.slice(1), body: body ?? {}, query: u.searchParams, me }) };
   } catch (e) {
     if (e instanceof HttpError) return { status: e.status, data: { error: e.message, code: e.code } };
     return { status: 500, data: { error: `데모 오류: ${(e as Error).message}` } };

@@ -1,7 +1,17 @@
 // 데모 모드: 실제 서버 대신 브라우저 안의 가짜 서버(server.ts)로 요청을 보낸다.
-import { handle } from './server';
+import { handle, setAi } from './server';
 
-export function installDemo(): void {
+/** claude.ai 화면 안에서 열렸으면 실제 AI(sample 기능)를 가져온다. 아니면 null */
+async function loadSample(): Promise<Parameters<typeof setAi>[0]> {
+  const c = (window as unknown as { claude?: { use?: (name: string) => Promise<unknown> } }).claude;
+  if (!c?.use) return null;
+  const timeout = new Promise<null>((res) => setTimeout(() => res(null), 5000));
+  const fn = await Promise.race([c.use('sample').catch(() => null), timeout]);
+  return (fn as Parameters<typeof setAi>[0]) ?? null;
+}
+
+export async function installDemo(): Promise<void> {
+  setAi(await loadSample());
   const realFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
