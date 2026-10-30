@@ -3,6 +3,8 @@ import type { DB } from './db.js';
 import { OUTPUT_INSTRUCTIONS } from './defaults.js';
 import { qaSearchText, strength, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
+import { looksLikeFollowUp } from './knowledge/followup.js';
+export { looksLikeFollowUp };
 import type { ChatTurn, LlmClient } from './llm/index.js';
 import { getSetting } from './settings.js';
 
@@ -21,8 +23,8 @@ export interface MessageRow {
   created_at: string;
 }
 
-export const ANSWER_TYPES = ['근거답변', '연결형', '답변범위외', '근거없음'] as const;
-export type AnswerType = (typeof ANSWER_TYPES)[number];
+import { ANSWER_TYPES, type AnswerType } from './constants.js';
+export { ANSWER_TYPES, type AnswerType };
 const REFERRALS = ['지역앵커센터', '대학규정', 'e나라도움', '교육부', '담당자'] as const;
 
 /** 화면의 근거 카드에 쓰는 정보 (messages.citations 에 JSON으로 저장) */
@@ -206,11 +208,6 @@ function outOfScopeText(h: Hit<{ guidance: string; department: string }>): strin
 }
 
 /** "더 자세히요", "그럼 예시는요?"처럼 앞 질문을 이어 묻는 말인지 */
-function looksLikeFollowUp(query: string): boolean {
-  const len = query.replace(/\s/g, '').length;
-  return len <= 8 || (len <= 20 && /그럼|그러면|그렇다면|더 |자세히|예시|예를|다시|이어서|추가로|그 경우|위 /.test(query));
-}
-
 /** 이번 질문의 낱말이 찾은 근거 안에 들어 있는지 ("점심 메뉴 추천" 같은 엉뚱한 질문이 앞 주제 근거로 답해지지 않도록) */
 function overlapsEvidence(query: string, r: SearchResult): boolean {
   const tokens = new Set(tokenize(query).filter((t) => !QUERY_STOP_TOKENS.has(t)));
@@ -241,11 +238,12 @@ export async function generateAnswer(
       (history[i + 1]?.answer_type === '근거답변' || history[i + 1]?.answer_type === '연결형'),
   )?.content;
   if (!result.passed && prevQuestion) {
-    // 이어 묻는 말이면 앞 질문으로 다시 찾고, 아니면 합쳐 찾되 이번 질문의 낱말이 근거에 있어야 쓴다
-    const retry = looksLikeFollowUp(query)
-      ? await kb.search(prevQuestion, businessType)
-      : await kb.search(`${prevQuestion}\n${query}`, businessType);
-    if (retry.passed && (looksLikeFollowUp(query) || overlapsEvidence(query, retry))) result = retry;
+    // 앞 질문과 합쳐 다시 찾는다 ("보직수당 지급 가능?" → "그럼 성과급은요?" 는 두 주제를 함께 찾음).
+    // 이어 묻는 말이면 그래도 없을 때 앞 질문만으로 찾고, 아니면 이번 질문의 낱말이 근거에 있어야 쓴다.
+    const followUp = looksLikeFollowUp(query);
+    let retry = await kb.search(`${prevQuestion}\n${query}`, businessType);
+    if (!retry.passed && followUp) retry = await kb.search(prevQuestion, businessType);
+    if (retry.passed && (followUp || overlapsEvidence(query, retry))) result = retry;
   }
 
   const base: Citations = {

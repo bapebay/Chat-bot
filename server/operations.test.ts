@@ -183,4 +183,6 @@ test('같은 대화의 엉뚱한 질문은 앞 질문 근거로 답하지 않고
   assert.equal((await send('더 자세히요')).answer_type, '근거답변');
   assert.equal((await send('점심 메뉴 하나 추천해 줄래요')).answer_type, '근거없음');
   assert.equal((await send('그럼 예시를 들어 설명해 주세요')).answer_type, '근거답변');
+  assert.equal((await send('만약 부득이한 사정이 생긴 경우라면 어떻게 하나요?')).answer_type, '근거답변');
+  assert.equal((await send('그 한도는 얼마까지예요?')).answer_type, '근거답변');
 });

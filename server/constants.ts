@@ -13,3 +13,6 @@ export const ROLES = ['user', 'reviewer', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const MAX_LOGIN_FAILURES = 10;
+
+export const ANSWER_TYPES = ['근거답변', '연결형', '답변범위외', '근거없음'] as const;
+export type AnswerType = (typeof ANSWER_TYPES)[number];

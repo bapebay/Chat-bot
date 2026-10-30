@@ -4,7 +4,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Bm25 } from '../../../server/knowledge/bm25';
 import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS } from '../../../server/defaults';
-import { maskPii } from '../../../server/knowledge/text';
+import { parseEvalWorkbook } from '../../../server/evaluation-excel';
+import { parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../../../server/knowledge/excel';
+import { looksLikeFollowUp } from '../../../server/knowledge/followup';
+import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
+import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
 import { DEMO_EVAL_ITEMS, DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, DEMO_QA, REGIONS_17, type DemoQa } from './data';
 
 type Json = any;
@@ -195,10 +199,15 @@ function search(query: string, businessType: string) {
   };
 }
 
-const looksLikeFollowUp = (q: string) => {
-  const len = q.replace(/\s/g, '').length;
-  return len <= 8 || (len <= 20 && /그럼|그러면|그렇다면|더 |자세히|예시|예를|다시|이어서|추가로|그 경우|위 /.test(q));
-};
+/** 이번 질문의 낱말이 찾은 근거 안에 들어 있는지 (서버와 같은 규칙) */
+function overlapsEvidence(query: string, r: Json): boolean {
+  const tokens = new Set(tokenize(query).filter((t) => !QUERY_STOP_TOKENS.has(t)));
+  const texts = [
+    ...r.qa.filter((h: Json) => h.relevant).map((h: Json) => `${qaText(h.doc)}\n${h.doc.answer}`),
+    ...r.guideline.filter((h: Json) => h.relevant).map((h: Json) => `${h.doc.clause}\n${h.doc.text}`),
+  ];
+  return texts.some((t: string) => tokenize(t).some((tok) => tokens.has(tok)));
+}
 
 // ================= 테스트 모델 답변 =================
 /** AI 대신 검색된 표준답안 내용으로 답을 만든다 (서버의 근거 판정·유형 규칙은 같게) */
@@ -209,9 +218,12 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     .map((m, i) => ({ m, i }))
     .reverse()
     .find(({ m, i }) => m.role === 'user' && !looksLikeFollowUp(m.content) && ['근거답변', '연결형'].includes(history[i + 1]?.answer_type))?.m.content;
-  if (!r.passed && prevQ && looksLikeFollowUp(query)) {
-    const retry = search(prevQ, businessType);
-    if (retry.passed) r = retry;
+  if (!r.passed && prevQ) {
+    // 서버와 같은 규칙: 앞 질문과 합쳐 다시 찾고, 이어 묻는 말이면 앞 질문만으로도 찾는다
+    const followUp = looksLikeFollowUp(query);
+    let retry = search(`${prevQ}\n${query}`, businessType);
+    if (!retry.passed && followUp) retry = search(prevQ, businessType);
+    if (retry.passed && (followUp || overlapsEvidence(query, retry))) r = retry;
   }
   const retrieved = {
     mode: r.mode,
@@ -656,7 +668,6 @@ const pub = (u: Json) => {
   return rest;
 };
 const byId = <T extends { id: number }>(list: T[], id: string | number) => list.find((x) => x.id === Number(id));
-const UPLOAD_MSG = '데모 페이지에서는 파일을 올릴 수 없습니다. 미리 넣어 둔 가상 데이터로 둘러보세요. (실제 서비스에서는 엑셀·PDF 업로드가 됩니다)';
 
 route('GET', '/api/meta', 'none', () => ({ org_types: ['재단', '지역앵커센터', '대학'], regions: REGIONS, business_types: BUSINESS_TYPES, test_mode: !ai, demo: true, demo_ai: !!ai }));
 route('GET', '/api/health', 'none', () => ({ ok: true }));
@@ -997,18 +1008,103 @@ route('POST', '/api/admin/knowledge/qa/versions/:id/activate', 'admin', ({ param
   qaVersionId = v.id;
   return { ok: true };
 });
-route('DELETE', '/api/admin/knowledge/qa/versions/:id', 'admin', () => {
-  throw new HttpError(400, '서비스 중인 버전은 삭제할 수 없습니다.');
+route('DELETE', '/api/admin/knowledge/qa/versions/:id', 'admin', ({ params }) => {
+  const v = byId(qaVersions, params[0]);
+  if (!v) throw new HttpError(404, '버전을 찾을 수 없습니다.');
+  if (v.status === 'active') throw new HttpError(400, '서비스 중인 버전은 삭제할 수 없습니다.');
+  qaVersions.splice(qaVersions.indexOf(v), 1);
+  qaItems = qaItems.filter((i) => i.version_id !== v.id);
+  return { ok: true };
 });
 route('GET', '/api/admin/knowledge/qa/versions/:id/items', 'reviewer', ({ params, query }) => {
   const q = query.get('q') ?? '';
   return qaItems.filter((i) => i.version_id === Number(params[0]) && (!q || [i.qa_id, i.question, i.checklist, i.answer].some((t) => t.includes(q)))).slice(0, 200);
 });
-for (const p of ['/api/admin/knowledge/qa/upload', '/api/admin/knowledge/guidelines/upload', '/api/admin/knowledge/out-of-scope/upload', '/api/admin/knowledge/principles/parse', '/api/admin/eval/sets']) {
-  route('POST', p, 'admin', () => {
-    throw new HttpError(400, UPLOAD_MSG);
-  });
+// ----- 파일 올리기: 파일은 이 브라우저 안에서만 읽고, 어디에도 저장·전송하지 않는다 -----
+async function readFile(body: Json, exts: RegExp) {
+  const file = body instanceof FormData ? body.get('file') : null;
+  if (!(file instanceof File)) throw new HttpError(400, '파일을 선택해 주세요.');
+  if (!exts.test(file.name)) throw new HttpError(400, '지원하지 않는 파일 형식입니다.');
+  if (file.size > 15 * 1024 * 1024) throw new HttpError(400, '파일이 너무 큽니다 (15MB 이하).');
+  const field = (k: string) => String((body as FormData).get(k) ?? '');
+  return { name: file.name, buf: await file.arrayBuffer(), field };
 }
+const asBuffer = (b: ArrayBuffer) => b as unknown as Parameters<typeof parseQaWorkbook>[0];
+const bad = (e: unknown) => new HttpError(400, (e as Error).message);
+const textOf = (b: ArrayBuffer) => new TextDecoder('utf-8').decode(b);
+
+route('POST', '/api/admin/knowledge/qa/upload', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.xlsx$/i);
+  let parsed;
+  try {
+    parsed = await parseQaWorkbook(asBuffer(f.buf));
+  } catch (e) {
+    throw bad(e);
+  }
+  // 적용하지 않은 이전 미리보기는 지운다
+  for (const v of qaVersions.filter((x) => x.status === 'draft')) qaItems = qaItems.filter((i) => i.version_id !== v.id);
+  qaVersions.splice(0, qaVersions.length, ...qaVersions.filter((x) => x.status !== 'draft'));
+  const v = { id: nextId(), filename: f.name, uploaded_by_name: users.find((u) => u.id === currentUserId)?.username, status: 'draft', item_count: parsed.items.length, warnings: parsed.warnings, created_at: ts(), activated_at: null };
+  qaVersions.push(v);
+  for (const it of parsed.items) {
+    const { row: _row, ...rest } = it;
+    qaItems.push({ id: nextId(), version_id: v.id, needs_recheck: 0, ...rest });
+  }
+  audit('표준 Q&A 업로드(미리보기)', `#${v.id} ${f.name}`, `${parsed.items.length}건`);
+  return versionRow(v);
+});
+route('POST', '/api/admin/knowledge/guidelines/upload', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.(pdf|txt|md)$/i);
+  let chunks;
+  try {
+    chunks = /\.pdf$/i.test(f.name) ? chunkDocument(await extractPdfPages(asBuffer(f.buf)), true) : chunkDocument([textOf(f.buf)], false);
+  } catch (e) {
+    throw bad(e);
+  }
+  if (!chunks.length) throw new HttpError(400, '파일에서 글자를 찾지 못했습니다. 스캔 이미지 PDF는 지원하지 않습니다.');
+  const doc = { id: nextId(), name: (f.field('name') || f.name.replace(/\.[^.]+$/, '')).slice(0, 100), kind: f.field('kind') === 'FAQ' ? 'FAQ' : '지침', filename: f.name, active: 1, uploaded_by_name: 'admin', created_at: ts() };
+  guidelineDocs.push(doc);
+  chunks.forEach((c, i) => guidelineChunks.push({ id: nextId(), doc_id: doc.id, seq: i, ...c }));
+  audit('지침·FAQ 업로드', doc.name, `${chunks.length}개 조항`);
+  return { ok: true, id: doc.id, chunk_count: chunks.length };
+});
+route('POST', '/api/admin/knowledge/out-of-scope/upload', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.(xlsx|txt|md|csv)$/i);
+  let items;
+  try {
+    items = /\.xlsx$/i.test(f.name)
+      ? await parseOutOfScope(asBuffer(f.buf), f.name)
+      : textOf(f.buf).split(/\r?\n/).map((l) => l.replace(/^[-*\d.)\s]+/, '').trim()).filter(Boolean).map((question) => ({ question, guidance: '', department: '' }));
+  } catch (e) {
+    throw bad(e);
+  }
+  outOfScope = items.map((o) => ({ id: nextId(), ...o }));
+  audit('답변범위 외 목록 교체', f.name, `${items.length}건`);
+  return { ok: true, count: items.length };
+});
+route('POST', '/api/admin/knowledge/principles/parse', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.(xlsx|txt|md)$/i);
+  try {
+    return { text: /\.xlsx$/i.test(f.name) ? await parsePrinciples(asBuffer(f.buf), f.name) : textOf(f.buf).trim() };
+  } catch (e) {
+    throw bad(e);
+  }
+});
+route('POST', '/api/admin/eval/sets', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.xlsx$/i);
+  let parsed;
+  try {
+    parsed = await parseEvalWorkbook(asBuffer(f.buf));
+  } catch (e) {
+    throw bad(e);
+  }
+  const set = { id: nextId(), name: (f.field('name') || f.name.replace(/\.[^.]+$/, '')).slice(0, 100), filename: f.name, created_at: ts() };
+  evalSets.push(set);
+  parsed.items.forEach((e, i) =>
+    evalItems.push({ id: nextId(), set_id: set.id, seq: i + 1, question: e.question, business_type: e.business_type, expected_qa_ids: e.expected_qa_ids, expected_type: e.expected_type, note: e.note }),
+  );
+  return { id: set.id, count: parsed.items.length, warnings: parsed.warnings };
+});
 route('GET', '/api/admin/knowledge/out-of-scope', 'admin', () => outOfScope);
 route('GET', '/api/admin/knowledge/guidelines', 'admin', () => guidelineDocs.map((d) => ({ ...d, chunk_count: guidelineChunks.filter((c) => c.doc_id === d.id).length })));
 route('GET', '/api/admin/knowledge/guidelines/:id/chunks', 'admin', ({ params }) => guidelineChunks.filter((c) => c.doc_id === Number(params[0])));
@@ -1064,8 +1160,12 @@ route('DELETE', '/api/admin/referral-contacts/:id', 'admin', ({ params }) => {
 route('GET', '/api/admin/eval/sets', 'admin', () =>
   evalSets.map((s) => ({ ...s, item_count: evalItems.filter((i) => i.set_id === s.id).length, run_count: evalRuns.filter((r) => r.set_id === s.id).length })),
 );
-route('DELETE', '/api/admin/eval/sets/:id', 'admin', () => {
-  throw new HttpError(400, '데모에서는 예시 질문집을 지울 수 없습니다.');
+route('DELETE', '/api/admin/eval/sets/:id', 'admin', ({ params }) => {
+  const set = byId(evalSets, params[0]);
+  if (!set) throw new HttpError(404, '평가 질문집을 찾을 수 없습니다.');
+  if (evalRuns.some((r) => r.set_id === set.id && r.status === 'running')) throw new HttpError(409, '평가가 실행 중입니다.');
+  evalSets.splice(evalSets.indexOf(set), 1);
+  return { ok: true };
 });
 route('POST', '/api/admin/eval/sets/:id/runs', 'admin', ({ params, body }) => {
   if (evalRuns.some((r) => r.status === 'running')) throw new HttpError(409, '이미 실행 중인 평가가 있습니다.');

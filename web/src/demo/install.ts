@@ -19,7 +19,7 @@ export async function installDemo(): Promise<void> {
     if (!path.startsWith('/api/')) return realFetch(input, init);
     const method = (init?.method ?? 'GET').toUpperCase();
     let body: unknown = undefined;
-    if (init?.body instanceof FormData) body = {};
+    if (init?.body instanceof FormData) body = init.body; // 파일은 브라우저 안에서만 읽는다
     else if (typeof init?.body === 'string') {
       try {
         body = JSON.parse(init.body);
