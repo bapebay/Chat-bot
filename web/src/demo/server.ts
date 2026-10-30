@@ -9,7 +9,9 @@ import { parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../../../serv
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
-import { DEMO_EVAL_ITEMS, DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, DEMO_QA, REGIONS_17, type DemoQa } from './data';
+import { DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, REGIONS_17, type DemoQa } from './data';
+// 데모 기본 표준답안: 관리자가 올린 '중복질의_통합_표준답안초안_5차' (요청에 따라 기본값으로 내장)
+import DEFAULT_QA from './default-qa.json';
 
 type Json = any;
 class HttpError extends Error {
@@ -99,9 +101,14 @@ let currentUserId: number | null = null;
 
 let qaVersionId = nextId();
 const qaVersions: Json[] = [
-  { id: qaVersionId, filename: '표준QA_통합질의_가상.xlsx', uploaded_by_name: 'admin', status: 'active', item_count: DEMO_QA.length, warnings: [], created_at: ago(60 * 24 * 3), activated_at: ago(60 * 24 * 3) },
+  { id: qaVersionId, filename: DEFAULT_QA.filename, uploaded_by_name: 'admin', status: 'active', item_count: DEFAULT_QA.items.length, warnings: [], created_at: ago(60 * 24 * 3), activated_at: ago(60 * 24 * 3) },
 ];
-let qaItems: Json[] = DEMO_QA.map((q) => ({ id: nextId(), version_id: qaVersionId, needs_recheck: 0, ...q }));
+let qaItems: Json[] = (DEFAULT_QA.items as DemoQa[]).map((q) => ({ id: nextId(), version_id: qaVersionId, needs_recheck: 0, ...q }));
+
+/** 표준답안의 대분류(예: '순수앵커; 글로컬')에서 첫 사업 유형 */
+const firstBusinessType = (c1: string) => BUSINESS_TYPES.find((b) => c1.split(/[;,]/)[0].includes(b)) ?? '모름';
+/** 중분류마다 첫 표준답안 (예시 대화·예시 평가 질문용) */
+const PER_CATEGORY: DemoQa[] = [...new Map((DEFAULT_QA.items as DemoQa[]).map((q) => [q.category2, q] as const)).values()];
 const qaRevisions: Json[] = [];
 
 // 지침 발췌를 조항 단위로 나눈다 (실제 서버의 조항 분할을 단순화)
@@ -447,14 +454,10 @@ const titleOf = (q: string) => {
 
 // ----- 처음 화면이 비어 있지 않도록 예시 사용 기록을 만든다 -----
 {
+  // 예시 사용 기록: 기본 표준답안의 대표 질의 몇 개 + 근거 없음·범위 외 예시
   const samples = [
-    ['글로컬 사업단장에게 보직수당 지급 가능한가요?', '글로컬'],
-    ['사업비 이월 가능한가요?', '모름'],
-    ['정산보고서 언제까지 내야 하나요?', '모름'],
-    ['1억원 이상 장비 구입 승인 절차는?', '모름'],
-    ['순수앵커 보직수당 기준 알려주세요', '순수앵커'],
+    ...PER_CATEGORY.slice(0, 6).map((q) => [q.question, '모름']),
     ['사업단 워크숍 숙소 예약 방법은?', '모름'],
-    ['선결제 가능한가요?', '모름'],
     ['자체평가 실적으로 인정되나요?', '모름'],
   ];
   const people = [user, ...others];
@@ -647,9 +650,15 @@ function summarize(runId: number) {
 }
 
 {
-  const set = { id: nextId(), name: '시범운영 평가 질문집 (가상)', filename: '평가질문집_가상.xlsx', created_at: ago(60 * 24 * 2) };
+  const set = { id: nextId(), name: '예시 평가 질문집 (5차 표준답안 기준)', filename: '예시_평가질문집.xlsx', created_at: ago(60 * 24 * 2) };
   evalSets.push(set);
-  DEMO_EVAL_ITEMS.forEach((e, i) =>
+  // 예시 평가 질문: 중분류별 대표 질의 6개(기대 통합번호 = 그 답안) + 범위 외 + 근거 없음
+  const evalSeed = [
+    ...PER_CATEGORY.slice(0, 6).map((q) => ({ question: q.question, business_type: firstBusinessType(q.category1), expected: [q.qa_id], type: q.is_referral ? '연결형' : '근거답변' })),
+    { question: '자체평가 실적으로 인정되나요?', business_type: '모름', expected: [] as string[], type: '답변범위외' },
+    { question: '사업단 워크숍 숙소 예약 방법은?', business_type: '모름', expected: [] as string[], type: '근거없음' },
+  ];
+  evalSeed.forEach((e, i) =>
     evalItems.push({ id: nextId(), set_id: set.id, seq: i + 1, question: e.question, business_type: e.business_type, expected_qa_ids: e.expected, expected_type: e.type, note: '' }),
   );
   const r = runEval(set.id, '기준선');
