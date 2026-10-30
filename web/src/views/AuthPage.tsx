@@ -164,7 +164,7 @@ function DemoLogin({ onLogin }: { onLogin: (u: User) => void }) {
   return (
     <div className="mb-6 space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
       <p className="text-sm font-bold text-indigo-900 dark:text-indigo-200">데모 페이지 · 가상 데이터와 테스트 모델로 동작합니다</p>
-      <p className="text-xs text-indigo-800 dark:text-indigo-300">역할을 골라 바로 들어가 보세요. 새로고침하면 처음 상태로 돌아갑니다.</p>
+      <p className="text-xs text-indigo-800 dark:text-indigo-300">역할을 골라 바로 들어가 보세요. claude.ai에서 열면 올린 데이터가 자동 저장됩니다.</p>
       <div className="grid gap-2 sm:grid-cols-3">
         {roles.map((r) => (
           <button

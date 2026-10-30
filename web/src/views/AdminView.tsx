@@ -586,6 +586,7 @@ function SystemTab() {
           <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">모델과 API 키는 보안을 위해 서버의 .env 파일에서만 바꿀 수 있습니다. 바꾼 뒤 서버를 다시 시작하세요.</p>
         )}
       </section>
+      {info.llm.demo_tiers !== undefined || info.llm.provider === 'demo' ? <DemoStorage /> : null}
       <LimitSettings />
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {Object.entries(info.counts).map(([k, v]) => (
@@ -646,6 +647,41 @@ function LimitSettings() {
       </div>
       <p className="text-xs text-slate-500 dark:text-slate-400">질문 상한은 한국 시간 0시에 초기화되며 0이면 제한하지 않습니다 (AI를 부르지 않은 질문도 포함). 보관 기간이 지난 대화는 서버가 6시간마다 자동 삭제합니다 (1:1 문의에 첨부된 대화 사본은 남음).</p>
       {message && <Notice kind={message.kind}>{message.text}</Notice>}
+    </section>
+  );
+}
+
+/** 데모 페이지 전용: 저장 상태와 초기화 */
+function DemoStorage() {
+  const [st, setSt] = useState<{ mode: string; savedAt: string | null; message: string } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    const load = () => api<typeof st>('/api/demo/storage').then(setSt).catch(() => undefined);
+    load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, []);
+  if (!st) return null;
+  return (
+    <section className="card space-y-2 p-4 text-sm">
+      <h3 className="font-bold text-slate-800 dark:text-slate-100">데모 데이터 저장</h3>
+      <p className={st.mode === 'error' || st.mode === 'readonly' ? 'text-amber-700 dark:text-amber-300' : 'text-slate-600 dark:text-slate-300'}>{st.message}</p>
+      {st.mode !== 'off' &&
+        (confirming ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-red-600">올린 표준답안·지침·대화·평가 결과를 모두 지우고 처음 상태로 돌아갑니다.</span>
+            <button type="button" className="btn-danger px-2.5 py-1 text-xs" onClick={() => api('/api/demo/storage/reset', { body: {} })}>
+              지우기
+            </button>
+            <button type="button" className="btn-secondary px-2.5 py-1 text-xs" onClick={() => setConfirming(false)}>
+              취소
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="btn-secondary px-2.5 py-1 text-xs" onClick={() => setConfirming(true)}>
+            저장된 데이터 지우고 처음 상태로
+          </button>
+        ))}
     </section>
   );
 }

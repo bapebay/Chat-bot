@@ -562,6 +562,7 @@ function runEval(setId: number, label: string) {
       if (run.status === 'running') run.status = 'done';
       run.finished_at = ts();
       run.summary = summarize(run.id);
+      notifyChange();
     }
   }, 350);
   return run;
@@ -607,6 +608,7 @@ async function runEvalWithAi(run: Json, items: Json[]) {
   if (run.status === 'running') run.status = 'done';
   run.finished_at = ts();
   run.summary = summarize(run.id);
+  notifyChange();
 }
 
 function summarize(runId: number) {
@@ -972,6 +974,12 @@ route('POST', '/api/admin/settings/:key/revert', 'admin', ({ me, params, body })
   audit('설정 되돌리기', params[0], `이력 #${rev.id}`);
   return { value: rev.value, revisions: revList(params[0]) };
 });
+route('GET', '/api/demo/storage', 'user', () => storageStatus);
+route('POST', '/api/demo/storage/reset', 'admin', async () => {
+  if (!resetStorage) throw new HttpError(400, '저장 공간을 쓸 수 없는 화면입니다. 새로고침하면 처음 상태로 돌아갑니다.');
+  await resetStorage();
+  return { ok: true };
+});
 route('GET', '/api/admin/system', 'admin', () => ({
   llm: ai
     ? { provider: 'claude.ai (실제 AI)', model: `Claude ${TIER_LABEL[settings.demo_model_tier] ?? ''}`, history_messages: 6, demo_tiers: TIER_LABEL, demo_tier: settings.demo_model_tier }
@@ -1316,6 +1324,54 @@ route('GET', '/api/admin/audit', 'admin', ({ query }) => {
   return auditLogs.filter((l) => !q || [l.action, l.target, l.username ?? ''].some((t) => t.includes(q))).slice(0, 300);
 });
 
+// ================= 저장·불러오기 (새로고침해도 유지) =================
+// 페이지 전용 저장 공간(install.ts)이 이 함수들로 상태를 통째로 저장하고 되살린다.
+let notifyChange: () => void = () => undefined;
+export function onStateChange(fn: () => void) {
+  notifyChange = fn;
+}
+export interface StorageStatus {
+  mode: 'off' | 'loading' | 'saved' | 'saving' | 'readonly' | 'error';
+  savedAt: string | null;
+  message: string;
+}
+let storageStatus: StorageStatus = { mode: 'off', savedAt: null, message: '이 화면에서는 저장 공간을 쓸 수 없어 새로고침하면 처음 상태로 돌아갑니다.' };
+export function setStorageStatus(st: StorageStatus) {
+  storageStatus = st;
+}
+let resetStorage: (() => Promise<void>) | null = null;
+export function onResetStorage(fn: () => Promise<void>) {
+  resetStorage = fn;
+}
+
+const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, referralContacts, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries, evalSets, evalItems, evalRuns, evalResults };
+export function exportState(): Json {
+  return {
+    v: 1,
+    seq,
+    settings,
+    qaVersionId,
+    qaItems,
+    outOfScope,
+    // 실행 중이던 평가는 저장 시점의 모습으로 남기되, 다시 열면 '중단'으로 보이게 한다
+    ...Object.fromEntries(Object.entries(LISTS).map(([k, v]) => [k, v])),
+  };
+}
+export function importState(st: Json): void {
+  if (!st || st.v !== 1) return;
+  seq = Math.max(seq, Number(st.seq) || 0);
+  Object.assign(settings, st.settings ?? {});
+  qaVersionId = st.qaVersionId ?? qaVersionId;
+  qaItems = st.qaItems ?? qaItems;
+  outOfScope = st.outOfScope ?? outOfScope;
+  for (const [k, list] of Object.entries(LISTS) as [string, Json[]][]) {
+    if (Array.isArray(st[k])) list.splice(0, list.length, ...st[k]);
+  }
+  for (const r of evalRuns) {
+    if (r.status === 'running') Object.assign(r, { status: 'cancelled', error: '페이지를 닫아 중단되었습니다.', summary: summarize(r.id) });
+  }
+}
+
 // ================= 요청 처리 =================
 export async function handle(method: string, url: string, body: Json): Promise<{ status: number; data: Json }> {
   const u = new URL(url, 'http://demo.local');
@@ -1329,7 +1385,9 @@ export async function handle(method: string, url: string, body: Json): Promise<{
   // 질문 답변은 실제처럼 잠깐 기다렸다 보낸다
   if (/\/messages$/.test(u.pathname) && method === 'POST' && !ai) await new Promise((res) => setTimeout(res, 700));
   try {
-    return { status: 200, data: await r.handler({ params: u.pathname.match(r.re)!.slice(1), body: body ?? {}, query: u.searchParams, me }) };
+    const data = await r.handler({ params: u.pathname.match(r.re)!.slice(1), body: body ?? {}, query: u.searchParams, me });
+    if (method !== 'GET' && !u.pathname.startsWith('/api/auth/') && !u.pathname.startsWith('/api/demo/')) notifyChange();
+    return { status: 200, data };
   } catch (e) {
     if (e instanceof HttpError) return { status: e.status, data: { error: e.message, code: e.code } };
     return { status: 500, data: { error: `데모 오류: ${(e as Error).message}` } };

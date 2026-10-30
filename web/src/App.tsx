@@ -163,7 +163,7 @@ export default function App() {
         <div className="shrink-0 bg-amber-100 px-3 py-1.5 text-center text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
           {meta.demo
             ? meta.demo_ai
-              ? '데모 페이지: 가상 데이터 + 실제 AI(Claude, 보는 사람의 claude.ai 사용량 사용). 새로고침하면 처음 상태로 돌아갑니다.'
+              ? '데모 페이지: 실제 AI(Claude, 보는 사람의 claude.ai 사용량 사용). 올린 데이터는 자동 저장되며 관리 → 시스템 정보에서 저장 상태를 볼 수 있습니다.'
               : '데모 페이지: 가상 데이터와 테스트 모델로 동작합니다. 새로고침하면 처음 상태로 돌아갑니다.'
             : '테스트 모드: 실제 AI 모델이 연결되지 않아 예시 답변이 표시됩니다. (.env 의 LLM_PROVIDER 설정)'}
         </div>
