@@ -3,10 +3,11 @@
    AI 대신 '테스트 모델'이 검색된 표준답안으로 답을 만든다. 새로고침하면 처음 상태로 돌아간다. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Bm25 } from '../../../server/knowledge/bm25';
-import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS } from '../../../server/defaults';
+import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS, SECURITY_RULES } from '../../../server/defaults';
 import { parseEvalWorkbook } from '../../../server/evaluation-excel';
 import { parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
+import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
 import { DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, REGIONS_17, type DemoQa } from './data';
@@ -339,13 +340,29 @@ const AI_ERROR: Record<string, string> = {
 };
 
 /** 근거 판정은 테스트 모델과 같고, 답을 만드는 단계만 실제 AI가 한다 */
+/** 서버와 같은 보안 차단 답변 */
+function blockedAnswer(reason: string, extra: Json = {}) {
+  return {
+    provider: 'demo',
+    modelName: 'security-guard',
+    latency: 30,
+    ...extra,
+    text: BLOCKED_TEXT,
+    answerType: '답변범위외',
+    citations: { business_type: null, referral: null, qa: [], guideline: [], out_of_scope: null, security: reason, retrieved: { mode: 'keyword', qa: [], guideline: [] } },
+  };
+}
+
 async function answerWithAi(history: Json[], businessType: string, question: string) {
+  // 서버와 같은 1겹 방어: 대놓고 하는 공격 문구는 AI를 부르지 않는다
+  const attack = detectInjection(question);
+  if (attack) return blockedAnswer(attack);
   const t = generateAnswer(history, businessType, question);
   const testResult = { ...t, provider: 'demo', modelName: 'test-model', latency: 900 + Math.round(Math.random() * 600) };
   if (!t.model || !ai) return testResult;
   const r = t.r;
   const principles = settings.principles.trim();
-  const system = [settings.system_prompt, principles ? `# 답변 원칙 (담당자가 검수하며 정한 기준, 항상 지킨다)\n${principles}` : '', OUTPUT_INSTRUCTIONS]
+  const system = [settings.system_prompt, principles ? `# 답변 원칙 (담당자가 검수하며 정한 기준, 항상 지킨다)\n${principles}` : '', SECURITY_RULES, OUTPUT_INSTRUCTIONS]
     .filter(Boolean)
     .join('\n\n');
   let recent = history.slice(-6);
@@ -367,6 +384,9 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   const latency = Date.now() - started;
   const usage = { provider: 'claude.ai', modelName: `Claude ${TIER_LABEL[settings.demo_model_tier] ?? ''}`, latency, inputTokens: Math.round(input.length / 1.5), outputTokens: Math.round(text.length / 1.5) };
   const json = parseModelJson(text);
+  // 3겹: 답변에 내부 지시문이 섞이면 보여주지 않는다
+  const shown = json && typeof json.answer_markdown === 'string' ? json.answer_markdown : text;
+  if (leaksInstructions(shown, [settings.system_prompt, SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n'))) return blockedAnswer('지시문 노출 차단', { ...usage, model: true });
   if (!json || typeof json.answer_markdown !== 'string' || !json.answer_markdown.trim()) {
     return { ...t, ...usage, text: text.trim(), answerType: '근거답변', citations: { ...t.citations, qa: [], guideline: [] } };
   }
@@ -430,7 +450,8 @@ function storeAnswer(conv: Json, question: string, createdAt = ts(), given?: Jso
   };
   messages.push(msg);
   conv.updated_at = createdAt;
-  const source = a.answerType === '근거없음' ? 'no_evidence' : a.answerType === '답변범위외' ? 'out_of_scope' : null;
+  const source = a.citations?.security ? 'security' : a.answerType === '근거없음' ? 'no_evidence' : a.answerType === '답변범위외' ? 'out_of_scope' : null;
+  if (a.citations?.security) audit('보안 의심 질문 차단', a.citations.security, question.slice(0, 100));
   if (source) reviewQueue.push({ id: nextId(), message_id: msg.id, source, status: 'pending', resolution: null, qa_id: null, note: '', resolved_by: null, created_at: createdAt, resolved_at: null });
   return msg;
 }
@@ -744,6 +765,11 @@ route('POST', '/api/conversations/:id/messages', 'user', async ({ me, params, bo
   const c = ownConv(me, params[0]);
   const raw = String(body.content ?? '').trim();
   if (!raw) throw new HttpError(400, '질문을 입력해 주세요.');
+  const today = kstDate(ts());
+  const strikes = reviewQueue.filter(
+    (q) => q.source === 'security' && kstDate(q.created_at) === today && byId(conversations, byId(messages, q.message_id)?.conversation_id)?.user_id === me.id,
+  ).length;
+  if (strikes >= SECURITY_DAILY_STRIKES) throw new HttpError(429, '보안 정책에 맞지 않는 요청이 반복되어 오늘은 질문할 수 없습니다. 필요하면 1:1 문의를 이용해 주세요.', 'DAILY_LIMIT');
   const u = usage(me);
   if (u.limit > 0 && u.used >= u.limit) throw new HttpError(429, `오늘 질문 가능 횟수(${u.limit}회)를 모두 사용했습니다. 내일 다시 이용하시거나 1:1 문의를 이용해 주세요.`, 'DAILY_LIMIT');
   const question = maskPii(raw);
@@ -1251,7 +1277,9 @@ route('GET', '/api/admin/answers', 'admin', ({ query }) => {
             ? m.answer_type === '근거없음'
             : f === 'out_of_scope'
               ? m.answer_type === '답변범위외'
-              : true,
+              : f === 'security'
+                ? String(m.citations ?? '').includes('"security":')
+                : true,
     )
     .sort((a, b) => b.id - a.id)
     .slice(0, 200)

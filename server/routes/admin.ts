@@ -144,6 +144,8 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const id = idParam((req.params as { id: string }).id);
     const conv = id ? db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) : undefined;
     if (!conv) return reply.code(404).send({ error: '대화를 찾을 수 없습니다.' });
+    // 다른 사람의 대화를 본 기록을 남긴다 (내부자 열람 추적)
+    audit(db, req.user, '대화 열람', `대화 #${id}`);
     return { conversation: conv, messages: listMessages(db, id!) };
   });
 

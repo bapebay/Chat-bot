@@ -23,7 +23,7 @@ export interface QaItem {
 interface QueueItem {
   id: number;
   message_id: number;
-  source: 'bad' | 'no_evidence' | 'out_of_scope';
+  source: 'bad' | 'no_evidence' | 'out_of_scope' | 'security';
   status: string;
   resolution: string | null;
   qa_id: string | null;
@@ -43,7 +43,7 @@ interface QueueItem {
   feedback: { reason: string | null; comment: string }[];
 }
 
-const SOURCE_LABEL: Record<QueueItem['source'], string> = { bad: 'Bad 평가', no_evidence: '근거 없음', out_of_scope: '범위 외 판정' };
+const SOURCE_LABEL: Record<QueueItem['source'], string> = { bad: 'Bad 평가', no_evidence: '근거 없음', out_of_scope: '범위 외 판정', security: '보안 의심' };
 const RESOLUTION_LABEL: Record<string, string> = { edited: '기존 답안 수정', added: '새 답안 추가', ignored: '무시' };
 const errorText = (err: unknown, fb: string) => (err instanceof ApiError ? err.message : fb);
 
@@ -131,7 +131,7 @@ function QueuePanel() {
         <div key={it.id} className="card space-y-2 p-4 text-sm">
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
             <span
-              className={`rounded-full px-2 py-0.5 font-bold ${it.source === 'bad' ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}
+              className={`rounded-full px-2 py-0.5 font-bold ${it.source === 'bad' || it.source === 'security' ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}`}
             >
               {SOURCE_LABEL[it.source]}
             </span>

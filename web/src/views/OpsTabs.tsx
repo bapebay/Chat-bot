@@ -239,6 +239,7 @@ export function AnswersBrowser() {
     ['referral', '연결형'],
     ['no_evidence', '근거 없음'],
     ['out_of_scope', '범위 외'],
+    ['security', '보안 의심'],
     ['all', '전체'],
   ];
   return (

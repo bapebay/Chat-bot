@@ -154,7 +154,7 @@ function AssistantMessage({
           {type && <span className={`mb-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${type.cls}`}>{type.label}</span>}
           <Markdown text={body} />
           {c && <Evidence c={c} />}
-          {c && m.answer_type && m.answer_type !== '근거답변' && (
+          {c && m.answer_type && m.answer_type !== '근거답변' && !c.security && (
             <ReferralBox type={m.answer_type} c={c} onAskStaff={onAskStaff} />
           )}
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}

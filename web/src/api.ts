@@ -71,6 +71,8 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
+  /** 보안 의심으로 막은 경우 그 종류 */
+  security?: string;
   retrieved?: {
     mode: 'hybrid' | 'keyword';
     qa: { qa_id: string; keyword: number; semantic: number | null; relevant: boolean }[];

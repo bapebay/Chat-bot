@@ -99,7 +99,9 @@ export function adminOpsRoutes(app: FastifyInstance, db: DB) {
             ? `m.answer_type = '근거없음'`
             : filter === 'out_of_scope'
               ? `m.answer_type = '답변범위외'`
-              : '1 = 1';
+              : filter === 'security'
+                ? `m.citations LIKE '%"security":%'`
+                : '1 = 1';
     const rows = db
       .prepare(
         `SELECT m.id, m.conversation_id, m.answer_type, m.content, m.created_at, u.username, u.org_name,

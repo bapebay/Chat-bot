@@ -1,9 +1,10 @@
 import { config } from './config.js';
 import type { DB } from './db.js';
-import { OUTPUT_INSTRUCTIONS } from './defaults.js';
+import { OUTPUT_INSTRUCTIONS, SECURITY_RULES } from './defaults.js';
 import { qaSearchText, strength, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
+import { BLOCKED_TEXT, detectInjection, leaksInstructions } from './knowledge/guard.js';
 export { looksLikeFollowUp };
 import type { ChatTurn, LlmClient } from './llm/index.js';
 import { getSetting } from './settings.js';
@@ -44,6 +45,8 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
+  /** 보안 의심으로 막은 경우 그 종류 (예: '지시 무시 요청') */
+  security?: string;
   /** 검색 기록 (검토·통계용) */
   retrieved: {
     mode: SearchResult['mode'];
@@ -85,6 +88,7 @@ export function buildSystemPrompt(db: DB): string {
   return [
     getSetting(db, 'system_prompt'),
     principles ? `# 답변 원칙 (담당자가 검수하며 정한 기준, 항상 지킨다)\n${principles}` : '',
+    SECURITY_RULES,
     OUTPUT_INSTRUCTIONS,
   ]
     .filter(Boolean)
@@ -218,6 +222,23 @@ function overlapsEvidence(query: string, r: SearchResult): boolean {
   return texts.some((t) => tokenize(t).some((tok) => tokens.has(tok)));
 }
 
+/** 공격 의심 질문·지시문이 섞인 답변 대신 돌려주는 거절 답변 */
+function blockedAnswer(reason: string): Pick<Answer, 'text' | 'answerType' | 'citations'> {
+  return {
+    text: BLOCKED_TEXT,
+    answerType: '답변범위외',
+    citations: {
+      business_type: null,
+      referral: null,
+      qa: [],
+      guideline: [],
+      out_of_scope: null,
+      security: reason,
+      retrieved: { mode: 'keyword', qa: [], guideline: [] },
+    },
+  };
+}
+
 export async function generateAnswer(
   db: DB,
   llm: LlmClient,
@@ -226,6 +247,10 @@ export async function generateAnswer(
   businessType: string,
   question: string,
 ): Promise<Answer> {
+  // 1겹: 대놓고 하는 프롬프트 인젝션은 검색도 AI 호출도 하지 않고 거절한다
+  const attack = detectInjection(question);
+  if (attack) return { provider: null, model: null, inputTokens: null, outputTokens: null, ...blockedAnswer(attack) };
+
   // 가린 개인정보 표시([전화번호] 등)는 검색어에서 뺀다
   const query = question.replace(/\[(?:전화번호|이메일|주민등록번호|계좌번호)\]/g, ' ');
   let result = await kb.search(query, businessType);
@@ -277,7 +302,8 @@ export async function generateAnswer(
       content: `[근거 자료]\n${buildContext(result)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n[질문]\n${question}`,
     },
   ];
-  const llmResult = await llm.generate({ system: buildSystemPrompt(db), messages: turns, jsonSchema: ANSWER_JSON_SCHEMA });
+  const system = buildSystemPrompt(db);
+  const llmResult = await llm.generate({ system, messages: turns, jsonSchema: ANSWER_JSON_SCHEMA });
   const json = parseModelJson(llmResult.text);
   const usage = {
     provider: llmResult.provider,
@@ -285,6 +311,12 @@ export async function generateAnswer(
     inputTokens: llmResult.inputTokens,
     outputTokens: llmResult.outputTokens,
   };
+
+  // 3겹: 답변에 내부 지시문이 섞여 나오면 사용자에게 보여주지 않는다
+  const shown = json && typeof json.answer_markdown === 'string' ? json.answer_markdown : llmResult.text;
+  // 답변 원칙은 표준답안에서 나온 문장이라 답변에 그대로 쓰일 수 있으므로 비교에서 뺀다
+  const fixed = [getSetting(db, 'system_prompt'), SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n');
+  if (leaksInstructions(shown, fixed)) return { ...usage, ...blockedAnswer('지시문 노출 차단') };
 
   if (!json || typeof json.answer_markdown !== 'string' || !json.answer_markdown.trim()) {
     // 형식을 지키지 않은 답은 본문만 보여주고 근거 카드는 생략
@@ -366,7 +398,13 @@ export async function answerQuestion(
       );
     db.prepare(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`).run(conversationId);
     // 근거 없음·범위 외 답변은 표준답안 보완 후보로 검토 대기함에 넣는다
-    const source = answer.answerType === '근거없음' ? 'no_evidence' : answer.answerType === '답변범위외' ? 'out_of_scope' : null;
+    const source = answer.citations.security
+      ? 'security'
+      : answer.answerType === '근거없음'
+        ? 'no_evidence'
+        : answer.answerType === '답변범위외'
+          ? 'out_of_scope'
+          : null;
     if (source) db.prepare('INSERT OR IGNORE INTO review_queue (message_id, source) VALUES (?, ?)').run(info.lastInsertRowid, source);
     return db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid) as MessageRow;
   })();

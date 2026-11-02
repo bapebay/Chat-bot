@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { answerQuestion, listMessages, titleFromQuestion } from '../chat.js';
 import { BUSINESS_TYPES } from '../constants.js';
@@ -106,7 +107,12 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
 
     const isFirst = !db.prepare('SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1').get(conv.id);
     try {
-      await answerQuestion(db, llm, kb, conv.id, conv.business_type, question);
+      const answer = await answerQuestion(db, llm, kb, conv.id, conv.business_type, question);
+      const security = answer.citations ? (JSON.parse(answer.citations) as { security?: string }).security : undefined;
+      if (security) {
+        req.log.warn({ user: req.user.username, reason: security }, '보안 의심 질문 차단');
+        audit(db, req.user, '보안 의심 질문 차단', security, question.slice(0, 100));
+      }
     } catch (e) {
       req.log.error({ err: e }, 'AI 호출 실패');
       const detail = e instanceof LlmError ? e.message : 'AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.';
