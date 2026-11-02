@@ -1,6 +1,6 @@
 import { AlertCircle, Bot, Loader2, Megaphone, PlusCircle, Search, Send, ShieldAlert, Sidebar, Sparkles, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type ReferralContact, type Usage, type User } from '../api';
+import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type Usage, type User } from '../api';
 import { InquiryModal } from '../components/InquiryModal';
 import { MessageList, type Feedback } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
@@ -20,7 +20,6 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   const [inquiryFor, setInquiryFor] = useState<{ conversationId: number | null; text: string } | null>(null);
   const [inquiryDone, setInquiryDone] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
-  const [contacts, setContacts] = useState<ReferralContact[]>([]);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [piiFound, setPiiFound] = useState<PiiMatch[] | null>(null);
   const [feedback, setFeedback] = useState<Record<number, Feedback>>({});
@@ -35,7 +34,6 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   });
 
   useEffect(() => {
-    api<ReferralContact[]>('/api/referral-contacts').then(setContacts).catch(() => undefined);
     api<Usage>('/api/usage').then(setUsage).catch(() => undefined);
     api<{ category: string; question: string }[]>('/api/suggestions').then(setSuggestions).catch(() => undefined);
     api<typeof notices>('/api/notices').then(setNotices).catch(() => undefined);
@@ -269,7 +267,6 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
             )}
             <MessageList
               messages={messages}
-              contacts={contacts}
               feedback={feedback}
               onFeedback={sendFeedback}
               onAskStaff={() => setInquiryFor({ conversationId: current?.id ?? null, text: '' })}

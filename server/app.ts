@@ -17,7 +17,6 @@ import { knowledgeRoutes, MAX_UPLOAD_BYTES } from './routes/knowledge.js';
 import { adminOpsRoutes } from './routes/admin-ops.js';
 import { evaluationRoutes } from './routes/evaluation.js';
 import { operationsRoutes } from './routes/operations.js';
-import { referralRoutes, seedReferralContacts } from './routes/referrals.js';
 import { DEFAULT_RATE_RULES, rateLimit, securityHeaders, staffIpGuard } from './security.js';
 
 export interface BuildOptions {
@@ -62,8 +61,6 @@ export async function buildApp({
   inquiryRoutes(app, db);
   adminRoutes(app, db, llm, kb);
   knowledgeRoutes(app, db, kb);
-  seedReferralContacts(db);
-  referralRoutes(app, db);
   evaluationRoutes(app, db, llm, kb);
   operationsRoutes(app, db, kb);
   adminOpsRoutes(app, db);

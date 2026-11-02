@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardCheck, Database, Eye, FileSignature, History, Info, KeyRound, Lock, Megaphone, ScrollText, Share2, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, Database, Eye, FileSignature, History, Info, KeyRound, Lock, Megaphone, ScrollText, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
@@ -17,9 +17,8 @@ import { Modal, Notice, Select } from '../components/ui';
 import { EvalTab } from './EvalTab';
 import { KnowledgeTab } from './KnowledgeTab';
 import { AnswersBrowser, AuditTab, NoticeTab, StatsTab } from './OpsTabs';
-import { ReferralTab } from './ReferralTab';
 
-type Tab = 'stats' | 'users' | 'knowledge' | 'referrals' | 'eval' | 'conversations' | 'answers' | 'prompt' | 'notices' | 'audit' | 'system';
+type Tab = 'stats' | 'users' | 'knowledge' | 'eval' | 'conversations' | 'answers' | 'prompt' | 'notices' | 'audit' | 'system';
 
 export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; onUsersChanged: () => void }) {
   const [tab, setTab] = useState<Tab>('stats');
@@ -28,7 +27,6 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
     { key: 'stats', label: '사용량·비용', icon: BarChart3 },
     { key: 'users', label: '사용자·권한', icon: Users },
     { key: 'knowledge', label: '지식 데이터', icon: Database },
-    { key: 'referrals', label: '연결 연락처', icon: Share2 },
     { key: 'eval', label: '평가', icon: ClipboardCheck },
     { key: 'conversations', label: '대화 열람', icon: Eye },
     { key: 'answers', label: '답변 모아보기', icon: ClipboardCheck },
@@ -65,7 +63,6 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
           />
         )}
         {tab === 'knowledge' && <KnowledgeTab meta={meta} />}
-        {tab === 'referrals' && <ReferralTab meta={meta} />}
         {tab === 'eval' && <EvalTab />}
         {tab === 'stats' && <StatsTab />}
         {tab === 'answers' && <AnswersBrowser />}

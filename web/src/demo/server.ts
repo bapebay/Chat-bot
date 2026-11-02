@@ -126,13 +126,6 @@ const guidelineChunks: Json[] = [];
 }
 let outOfScope = DEMO_OUT_OF_SCOPE.map((o) => ({ id: nextId(), ...o }));
 
-const referralContacts: Json[] = [
-  ...REGIONS_17.map((r, i) => ({ id: nextId(), target: '지역앵커센터', region: r, name: `${r} 지역앵커센터`, contact: r === '부산' ? '051-000-0000 (예시 번호)' : '', note: '', sort_order: i })),
-  { id: nextId(), target: 'e나라도움', region: null, name: 'e나라도움 콜센터', contact: '', note: '', sort_order: 100 },
-  { id: nextId(), target: '교육부', region: null, name: '교육부 담당 부서', contact: '', note: '', sort_order: 101 },
-  { id: nextId(), target: '대학규정', region: null, name: '소속 대학 산학협력단', contact: '', note: '소속 대학의 사업비 관리 규정을 확인하세요.', sort_order: 102 },
-  { id: nextId(), target: '담당자', region: null, name: '중앙앵커센터(한국연구재단)', contact: '', note: '챗봇의 ‘담당자에게 문의’로 남겨 주시면 확인 후 답변드립니다.', sort_order: 103 },
-];
 
 const notices: Json[] = [{ id: nextId(), title: '[데모] 사업비 지침 개정 안내 (가상)', body: '보직수당 1인당 한도 기준이 변경되었습니다. 관련 답안은 재검수 중입니다.', active: 1, created_at: ago(60 * 24) }];
 const auditLogs: Json[] = [];
@@ -780,9 +773,6 @@ route('GET', '/api/suggestions', 'user', () => {
   return [...seen.entries()].slice(0, 8).map(([category, question]) => ({ category, question }));
 });
 route('GET', '/api/notices', 'user', () => notices.filter((n) => n.active).slice(0, 3));
-route('GET', '/api/referral-contacts', 'user', ({ me }) =>
-  referralContacts.filter((r) => (r.contact || r.note) && (r.target !== '지역앵커센터' || me.region === '해당없음' || r.region === me.region)),
-);
 
 // ----- 1:1 문의 -----
 const inquiryRow = (i: Json) => {
@@ -1152,28 +1142,6 @@ route('POST', '/api/admin/knowledge/search-test', 'reviewer', ({ body }) => {
   };
 });
 
-// ----- 관리: 연결 연락처 -----
-route('GET', '/api/admin/referral-contacts', 'admin', () => [...referralContacts].sort((a, b) => a.sort_order - b.sort_order));
-route('POST', '/api/admin/referral-contacts', 'admin', ({ body }) => {
-  if (!body.name) throw new HttpError(400, '이름을 입력해 주세요.');
-  const row = { id: nextId(), target: body.target, region: body.target === '지역앵커센터' ? body.region : null, name: body.name, contact: body.contact ?? '', note: body.note ?? '', sort_order: Number(body.sort_order) || 0 };
-  referralContacts.push(row);
-  audit('연결 연락처 추가', row.name);
-  return row;
-});
-route('PUT', '/api/admin/referral-contacts/:id', 'admin', ({ params, body }) => {
-  const r = byId(referralContacts, params[0]);
-  if (!r) throw new HttpError(404, '연락처를 찾을 수 없습니다.');
-  Object.assign(r, { target: body.target, region: body.target === '지역앵커센터' ? body.region : null, name: body.name, contact: body.contact ?? '', note: body.note ?? '' });
-  audit('연결 연락처 수정', r.name, r.contact);
-  return r;
-});
-route('DELETE', '/api/admin/referral-contacts/:id', 'admin', ({ params }) => {
-  const r = byId(referralContacts, params[0]);
-  if (r) referralContacts.splice(referralContacts.indexOf(r), 1);
-  return { ok: true };
-});
-
 // ----- 관리: 평가 -----
 route('GET', '/api/admin/eval/sets', 'admin', () =>
   evalSets.map((s) => ({ ...s, item_count: evalItems.filter((i) => i.set_id === s.id).length, run_count: evalRuns.filter((r) => r.set_id === s.id).length })),
@@ -1354,7 +1322,7 @@ export function onResetStorage(fn: () => Promise<void>) {
   resetStorage = fn;
 }
 
-const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, referralContacts, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries, evalSets, evalItems, evalRuns, evalResults };
+const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries, evalSets, evalItems, evalRuns, evalResults };
 export function exportState(): Json {
   return {
     v: 1,

@@ -100,23 +100,9 @@ test('하루 질문 상한', async () => {
   assert.equal((await ask(app, admin, '보직수당 기준')).statusCode, 429);
 });
 
-test('연결 연락처: 사용자는 자기 지역 앵커센터와 공통 대상만, 연락처가 입력된 것만 본다', async () => {
+test('연결 연락처 기능은 없어졌다 (번호를 보여주지 않고 문의 안내만)', async () => {
   const { app, admin, user } = await setup();
-  const all = (await app.inject({ url: '/api/admin/referral-contacts', headers: { cookie: admin } })).json();
-  assert.equal(all.filter((c: { target: string }) => c.target === '지역앵커센터').length, 17);
-  const busan = all.find((c: { region: string }) => c.region === '부산');
-  const seoul = all.find((c: { region: string }) => c.region === '서울');
-  for (const c of [busan, seoul]) {
-    await app.inject({ method: 'PUT', url: `/api/admin/referral-contacts/${c.id}`, headers: { cookie: admin }, payload: { ...c, contact: '051-000-0000' } });
-  }
-  const mine = (await app.inject({ url: '/api/referral-contacts', headers: { cookie: user } })).json();
-  const names = mine.map((c: { name: string }) => c.name);
-  assert.ok(names.includes('부산 지역앵커센터'));
-  assert.ok(!names.includes('서울 지역앵커센터'));
-  assert.ok(names.includes('중앙앵커센터(한국연구재단)')); // 안내 문구가 있어 표시
-  assert.ok(!names.includes('e나라도움 콜센터')); // 연락처 미입력
-  assert.equal((await app.inject({ url: '/api/admin/referral-contacts', headers: { cookie: user } })).statusCode, 403);
-  const bad = await app.inject({ method: 'POST', url: '/api/admin/referral-contacts', headers: { cookie: admin }, payload: { target: '지역앵커센터', name: 'x' } });
-  assert.equal(bad.statusCode, 400);
+  assert.equal((await app.inject({ url: '/api/referral-contacts', headers: { cookie: user } })).statusCode, 404);
+  assert.equal((await app.inject({ url: '/api/admin/referral-contacts', headers: { cookie: admin } })).statusCode, 404);
 });
 

@@ -141,17 +141,6 @@ CREATE TABLE IF NOT EXISTS guideline_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_guideline_chunks_doc ON guideline_chunks(doc_id, seq);
 
--- 연결 대상 연락처. target: 지역앵커센터(지역별) / e나라도움 / 교육부 / 대학규정 / 담당자
-CREATE TABLE IF NOT EXISTS referral_contacts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  target TEXT NOT NULL,
-  region TEXT,
-  name TEXT NOT NULL,
-  contact TEXT NOT NULL DEFAULT '',
-  note TEXT NOT NULL DEFAULT '',
-  sort_order INTEGER NOT NULL DEFAULT 0
-);
-
 -- 평가 질문집: 질문 + 기대 통합번호 + 기대 유형
 CREATE TABLE IF NOT EXISTS eval_sets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,4 +285,6 @@ function migrate(db: DB) {
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
   // 지침 개정 등으로 다시 검수해야 하는 표준답안 표시 (검색에서는 빠지지 않음)
   if (!has('qa_items', 'needs_recheck')) db.exec('ALTER TABLE qa_items ADD COLUMN needs_recheck INTEGER NOT NULL DEFAULT 0');
+  // 연결 대상 연락처 기능을 없앴다 (답변에는 '○○에 문의하시기 바랍니다'만 안내)
+  db.exec('DROP TABLE IF EXISTS referral_contacts');
 }

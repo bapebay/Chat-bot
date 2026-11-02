@@ -1,6 +1,6 @@
-import { BookOpen, Bot, ChevronDown, FileText, MessageSquareQuote, Phone, Share2, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
+import { BookOpen, Bot, ChevronDown, FileText, MessageSquareQuote, Share2, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
-import { parseCitations, type AnswerType, type Citations, type Message, type ReferralContact } from '../api';
+import { parseCitations, type AnswerType, type Citations, type Message } from '../api';
 import { Markdown } from './ui';
 
 export interface Feedback {
@@ -95,15 +95,12 @@ export function MessageList({
   messages,
   onAskStaff,
   showUsage = false,
-  contacts = [],
   feedback = {},
   onFeedback,
 }: {
   messages: Message[];
   onAskStaff?: () => void;
   showUsage?: boolean;
-  /** 이 사용자에게 보여줄 연결 대상 연락처 (내 지역 앵커센터 등) */
-  contacts?: ReferralContact[];
   /** 답변 id → 내가 남긴 평가 */
   feedback?: Record<number, Feedback>;
   onFeedback?: (messageId: number, f: Feedback) => Promise<void>;
@@ -121,7 +118,7 @@ export function MessageList({
             </div>
           </div>
         ) : (
-          <AssistantMessage key={m.id} m={m} onAskStaff={onAskStaff} showUsage={showUsage} contacts={contacts} feedback={feedback[m.id]} onFeedback={onFeedback} />
+          <AssistantMessage key={m.id} m={m} onAskStaff={onAskStaff} showUsage={showUsage} feedback={feedback[m.id]} onFeedback={onFeedback} />
         ),
       )}
     </>
@@ -132,14 +129,12 @@ function AssistantMessage({
   m,
   onAskStaff,
   showUsage,
-  contacts,
   feedback,
   onFeedback,
 }: {
   m: Message;
   onAskStaff?: () => void;
   showUsage: boolean;
-  contacts: ReferralContact[];
   feedback?: Feedback;
   onFeedback?: (messageId: number, f: Feedback) => Promise<void>;
 }) {
@@ -160,7 +155,7 @@ function AssistantMessage({
           <Markdown text={body} />
           {c && <Evidence c={c} />}
           {c && m.answer_type && m.answer_type !== '근거답변' && (
-            <ReferralBox type={m.answer_type} c={c} contacts={contacts} onAskStaff={onAskStaff} />
+            <ReferralBox type={m.answer_type} c={c} onAskStaff={onAskStaff} />
           )}
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}
         </div>
@@ -184,51 +179,29 @@ function AssistantMessage({
   );
 }
 
-const TARGET_LABEL: Record<string, string> = {
-  지역앵커센터: '지역앵커센터',
-  대학규정: '소속 대학의 사업비 관리 규정',
-  e나라도움: 'e나라도움 콜센터',
-  교육부: '교육부',
-  담당자: '중앙앵커센터 담당자',
+/** 연결형 답변 아래 안내 문구. 연락처는 보여주지 않고 어디에 문의할지만 알린다 */
+const TARGET_GUIDE: Record<string, string> = {
+  지역앵커센터: '지역앵커센터에 문의하시기 바랍니다.',
+  대학규정: '소속 대학(산학협력단)의 사업비 관리 규정을 확인하시기 바랍니다.',
+  e나라도움: 'e나라도움 콜센터에 문의하시기 바랍니다.',
+  교육부: '교육부에 문의하시기 바랍니다.',
+  담당자: '중앙앵커센터 담당자에게 문의하시기 바랍니다.',
 };
 
-function ContactLine({ c }: { c: ReferralContact }) {
-  const isUrl = /^https?:\/\//.test(c.contact);
-  return (
-    <li className="flex flex-wrap items-baseline gap-x-2">
-      <span className="font-semibold">{c.name}</span>
-      {c.contact &&
-        (isUrl ? (
-          <a href={c.contact} target="_blank" rel="noreferrer" className="break-all text-indigo-600 underline dark:text-indigo-400">
-            {c.contact}
-          </a>
-        ) : (
-          <span className="flex items-center gap-1">
-            <Phone className="h-3 w-3" /> {c.contact}
-          </span>
-        ))}
-      {c.note && <span className="text-slate-500 dark:text-slate-400">{c.note}</span>}
-    </li>
-  );
-}
-
-/** 연결형·범위 외·근거 없음 답변 아래: 어디에 확인하면 되는지와 담당자 문의 버튼 */
+/** 연결형·범위 외·근거 없음 답변 아래: 어디에 문의하면 되는지(연락처 없이)와 담당자 문의 버튼 */
 function ReferralBox({
   type,
   c,
-  contacts,
   onAskStaff,
 }: {
   type: AnswerType;
   c: Citations;
-  contacts: ReferralContact[];
   onAskStaff?: () => void;
 }) {
   const target = c.referral ?? (type === '연결형' ? '지역앵커센터' : '담당자');
-  const shown = contacts.filter((x) => x.target === target);
   const heading =
     type === '연결형'
-      ? `확인이 필요한 사항입니다. ${TARGET_LABEL[target] ?? target}에 확인해 주세요.`
+      ? (TARGET_GUIDE[target] ?? TARGET_GUIDE.지역앵커센터)
       : type === '답변범위외'
         ? '사업비 지침 챗봇의 답변 범위가 아닙니다.'
         : '근거를 찾지 못해 담당자 확인이 필요합니다.';
@@ -242,8 +215,6 @@ function ReferralBox({
           담당 부서: <b>{c.out_of_scope.department}</b>
         </p>
       )}
-      {shown.length > 0 && <ul className="space-y-1">{shown.map((x) => <ContactLine key={x.id} c={x} />)}</ul>}
-      {target === '대학규정' && shown.length === 0 && <p>소속 대학(산학협력단)의 사업비 관리 규정을 확인해 주세요.</p>}
       {onAskStaff && (
         <button type="button" onClick={onAskStaff} className="btn-primary mt-2.5 px-3 py-1.5 text-xs">
           <MessageSquareQuote className="h-3.5 w-3.5" /> 담당자에게 문의 (대화 자동 첨부)
