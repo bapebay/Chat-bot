@@ -4,6 +4,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Bm25 } from '../../../server/knowledge/bm25';
 import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS, SECURITY_RULES } from '../../../server/defaults';
+import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/accounts-excel';
 import { parseEvalWorkbook } from '../../../server/evaluation-excel';
 import { parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
@@ -232,7 +233,9 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     qa: r.qa.map((h: Json) => ({ qa_id: h.doc.qa_id, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
     guideline: r.guideline.map((h: Json, i: number) => ({ id: `G${i + 1}`, clause: h.doc.clause, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
   };
-  const base = { business_type: null, referral: null as string | null, qa: [] as Json[], guideline: [] as Json[], out_of_scope: null as Json, retrieved };
+  const v = qaVersions.find((x) => x.status === 'active');
+  const basis = v ? { qa_version: String(v.filename).replace(/\.xlsx$/i, ''), applied_at: v.activated_at } : null;
+  const base = { business_type: null, referral: null as string | null, qa: [] as Json[], guideline: [] as Json[], out_of_scope: null as Json, basis, retrieved };
   const best = Math.max(r.qa.find((h: Json) => h.relevant)?.keyword ?? 0, r.guideline.find((h: Json) => h.relevant)?.keyword ?? 0);
   if (r.outOfScope && r.outOfScope.keyword >= best) {
     const o = r.outOfScope.doc;
@@ -805,7 +808,13 @@ const inquiryRow = (i: Json) => {
   const u = byId(users, i.user_id);
   return { ...i, username: u?.username, org_name: u?.org_name, region: u?.region, answered_by_name: i.answered_by ? byId(users, i.answered_by)?.username : null };
 };
-route('GET', '/api/inquiries', 'user', ({ me }) => inquiries.filter((i) => i.user_id === me.id).sort((a, b) => b.id - a.id).map(inquiryRow));
+route('GET', '/api/inquiries', 'user', ({ me }) => {
+  const mine = inquiries.filter((i) => i.user_id === me.id).sort((a, b) => b.id - a.id);
+  const rows = mine.map(inquiryRow); // 이번 화면에서는 '새 답변'으로 보이고
+  mine.forEach((i) => (i.user_unread = 0)); // 열고 나면 읽은 것으로
+  return rows;
+});
+route('GET', '/api/inquiries/unread', 'user', ({ me }) => ({ count: inquiries.filter((i) => i.user_id === me.id && i.user_unread).length }));
 route('POST', '/api/inquiries', 'user', ({ me, body }) => {
   if (!String(body.content ?? '').trim()) throw new HttpError(400, '문의 내용을 입력해 주세요.');
   const conv = body.conversation_id ? ownConv(me, String(body.conversation_id)) : null;
@@ -820,7 +829,14 @@ route('GET', '/api/manage/inquiries', 'reviewer', ({ query }) => {
 route('POST', '/api/manage/inquiries/:id/answer', 'reviewer', ({ me, params, body }) => {
   const i = byId(inquiries, params[0]);
   if (!i) throw new HttpError(404, '문의를 찾을 수 없습니다.');
-  Object.assign(i, { answer: body.answer, answered_by: me.id, status: 'answered', answered_at: ts() });
+  Object.assign(i, { answer: body.answer, answered_by: me.id, status: 'answered', answered_at: ts(), user_unread: 1 });
+  return inquiryRow(i);
+});
+route('POST', '/api/manage/inquiries/:id/qa', 'reviewer', ({ params, body }) => {
+  const i = byId(inquiries, params[0]);
+  if (!i) throw new HttpError(404, '문의를 찾을 수 없습니다.');
+  i.qa_id = String(body.qa_id ?? '');
+  audit('문의 답변을 표준답안으로 등록', `문의 #${i.id}`, i.qa_id);
   return inquiryRow(i);
 });
 
@@ -929,6 +945,29 @@ route('POST', '/api/admin/users', 'admin', ({ body }) => {
   addUser({ username: body.username, role: body.role, org_type: body.org_type, org_name: body.org_name, region: body.region, business_type: body.business_type, last_login_at: null, created_at: ts() });
   audit('계정 생성', body.username, `권한 ${body.role}`);
   return { ok: true, temp_password: DEMO_PASSWORD };
+});
+// 계정 일괄 등록: 실제 서버와 같은 양식·검사. 데모 계정의 비밀번호는 모두 demo1234
+route('POST', '/api/admin/users/bulk', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.xlsx$/i);
+  let rows;
+  try {
+    rows = await parseAccountsWorkbook(asBuffer(f.buf));
+  } catch (e) {
+    throw bad(e);
+  }
+  if (!rows.length) throw new HttpError(400, '등록할 계정이 없습니다. 예시 행 아래에 계정을 적어 주세요.');
+  const seen = new Set<string>();
+  const results = rows.map(({ row, input }) => {
+    const error = seen.has(input.username)
+      ? '파일 안에 같은 아이디가 또 있습니다.'
+      : (accountFieldProblem(input) ?? (users.some((u) => u.username === input.username) ? '이미 사용 중인 아이디입니다.' : null));
+    seen.add(input.username);
+    if (!error) addUser({ ...input, last_login_at: null, created_at: ts(), must_change_password: false });
+    return { row, username: input.username, org_name: input.org_name, role: input.role, temp_password: error ? null : DEMO_PASSWORD, error };
+  });
+  const created = results.filter((r) => r.temp_password).length;
+  audit('계정 일괄 등록', f.name, `${created}명 등록, ${results.length - created}명 실패`);
+  return { created, failed: results.length - created, results };
 });
 const userOr404 = (id: string) => {
   const u = byId(users, id);

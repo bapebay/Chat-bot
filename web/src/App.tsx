@@ -53,8 +53,14 @@ export default function App() {
   }, [refreshMe]);
 
   const refreshBadges = useCallback(async () => {
-    if (!user || user.must_change_password || user.role === 'user') return;
+    if (!user || user.must_change_password) return;
     try {
+      if (user.role === 'user') {
+        // 사용자: 아직 확인하지 않은 1:1 문의 답변 수
+        const { count } = await api<{ count: number }>('/api/inquiries/unread');
+        setBadges({ inquiries: count, users: 0, review: 0 });
+        return;
+      }
       const review = (await api<unknown[]>('/api/review/queue')).length;
       if (user.role === 'admin') {
         const s = await api<{ counts: Record<string, number> }>('/api/admin/system');

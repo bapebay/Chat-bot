@@ -1,8 +1,9 @@
-import { CheckSquare, CornerDownRight, Inbox, Plus } from 'lucide-react';
+import { BookPlus, CheckSquare, CornerDownRight, Inbox, Plus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, formatTime, type Inquiry, type User } from '../api';
 import { InquiryModal } from '../components/InquiryModal';
 import { Notice } from '../components/ui';
+import { QaEditorModal } from './ReviewView';
 
 type Tab = 'mine' | 'pending' | 'answered' | 'all';
 
@@ -18,10 +19,12 @@ export function InquiriesView({ user, onChanged }: { user: User; onChanged: () =
     try {
       const url = tab === 'mine' ? '/api/inquiries' : `/api/manage/inquiries${tab === 'all' ? '' : `?status=${tab}`}`;
       setItems(await api<Inquiry[]>(url));
+      // 내 문의를 열면 새 답변을 읽은 것으로 처리하므로 상단 배지를 다시 센다
+      if (tab === 'mine') onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '목록을 불러오지 못했습니다.');
     }
-  }, [tab]);
+  }, [tab, onChanged]);
 
   useEffect(() => {
     load();
@@ -85,6 +88,7 @@ export function InquiriesView({ user, onChanged }: { user: User; onChanged: () =
 
 function InquiryCard({ item, canAnswer, onAnswered }: { item: Inquiry; canAnswer: boolean; onAnswered: () => void }) {
   const [showTranscript, setShowTranscript] = useState(false);
+  const [makingQa, setMakingQa] = useState(false);
   const [answer, setAnswer] = useState(item.answer ?? '');
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -112,6 +116,10 @@ function InquiryCard({ item, canAnswer, onAnswered }: { item: Inquiry; canAnswer
         >
           {item.status === 'answered' ? '답변 완료' : '답변 대기'}
         </span>
+        {!!item.user_unread && <span className="rounded-full bg-pink-500 px-2 py-0.5 font-semibold text-white">새 답변</span>}
+        {item.qa_id && (
+          <span className="rounded-full bg-indigo-100 px-2 py-0.5 font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">표준답안 {item.qa_id}로 등록됨</span>
+        )}
         <span>
           {item.username} · {item.org_name} ({item.region})
         </span>
@@ -155,11 +163,37 @@ function InquiryCard({ item, canAnswer, onAnswered }: { item: Inquiry; canAnswer
         </div>
       )}
       {canAnswer && item.answer && !editing && (
-        <div className="mt-2 text-right">
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-3">
+          {!item.qa_id && (
+            <button
+              type="button"
+              className="flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400"
+              onClick={() => setMakingQa(true)}
+              title="이 문의와 답변을 표준답안으로 등록해 다음부터 챗봇이 바로 답하게 합니다"
+            >
+              <BookPlus className="h-3.5 w-3.5" /> 표준답안으로 등록
+            </button>
+          )}
           <button type="button" className="text-xs text-slate-500 hover:underline" onClick={() => setEditing(true)}>
             답변 수정
           </button>
         </div>
+      )}
+      {makingQa && (
+        <QaEditorModal
+          initial={{
+            question: item.content,
+            answer: item.answer ?? '',
+            review_status: '확정',
+            change_history: `1:1 문의 #${item.id} 답변으로 추가 (${formatTime(item.answered_at)})`,
+          }}
+          onClose={() => setMakingQa(false)}
+          onSaved={async (qa) => {
+            setMakingQa(false);
+            await api(`/api/manage/inquiries/${item.id}/qa`, { body: { qa_id: qa.qa_id } }).catch(() => undefined);
+            onAnswered();
+          }}
+        />
       )}
     </div>
   );

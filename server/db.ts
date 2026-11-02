@@ -285,6 +285,10 @@ function migrate(db: DB) {
     (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
   // 지침 개정 등으로 다시 검수해야 하는 표준답안 표시 (검색에서는 빠지지 않음)
   if (!has('qa_items', 'needs_recheck')) db.exec('ALTER TABLE qa_items ADD COLUMN needs_recheck INTEGER NOT NULL DEFAULT 0');
+  // 문의자가 아직 보지 않은 답변 표시
+  if (!has('inquiries', 'user_unread')) db.exec('ALTER TABLE inquiries ADD COLUMN user_unread INTEGER NOT NULL DEFAULT 0');
+  // 문의 답변으로 만든 표준답안 통합번호 (같은 문의를 두 번 등록하지 않게 표시)
+  if (!has('inquiries', 'qa_id')) db.exec('ALTER TABLE inquiries ADD COLUMN qa_id TEXT');
   // 연결 대상 연락처 기능을 없앴다 (답변에는 '○○에 문의하시기 바랍니다'만 안내)
   db.exec('DROP TABLE IF EXISTS referral_contacts');
 }

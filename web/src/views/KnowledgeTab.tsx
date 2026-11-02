@@ -56,7 +56,7 @@ function errorText(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
-function FilePicker({ accept, label, busy, onFile }: { accept: string; label: string; busy?: boolean; onFile: (f: File) => void }) {
+export function FilePicker({ accept, label, busy, onFile }: { accept: string; label: string; busy?: boolean; onFile: (f: File) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <>

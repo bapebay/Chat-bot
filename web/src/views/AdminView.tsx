@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardCheck, Database, Eye, FileSignature, History, Info, KeyRound, Lock, Megaphone, ScrollText, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
+import { BarChart3, ClipboardCheck, Database, Eye, FileSignature, FileSpreadsheet, History, Info, KeyRound, Lock, Megaphone, ScrollText, Trash2, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   api,
@@ -15,7 +15,7 @@ import {
 import { MessageList } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
 import { EvalTab } from './EvalTab';
-import { KnowledgeTab } from './KnowledgeTab';
+import { FilePicker, KnowledgeTab } from './KnowledgeTab';
 import { AnswersBrowser, AuditTab, NoticeTab, StatsTab } from './OpsTabs';
 
 type Tab = 'stats' | 'users' | 'knowledge' | 'eval' | 'conversations' | 'answers' | 'prompt' | 'notices' | 'audit' | 'system';
@@ -93,6 +93,7 @@ function UsersTab({
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
   const [tempPassword, setTempPassword] = useState<{ username: string; password: string } | null>(null);
   const [creating, setCreating] = useState(false);
+  const [bulk, setBulk] = useState(false);
   const [filter, setFilter] = useState('');
 
   const load = useCallback(async () => {
@@ -173,6 +174,9 @@ function UsersTab({
           </h3>
           <div className="flex gap-2">
             <input className="input w-48" placeholder="아이디·기관·지역 검색" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <button type="button" className="btn-secondary shrink-0" onClick={() => setBulk(true)}>
+              <FileSpreadsheet className="h-4 w-4" /> 일괄 등록
+            </button>
             <button type="button" className="btn-primary shrink-0" onClick={() => setCreating(true)}>
               <UserPlus className="h-4 w-4" /> 계정 생성
             </button>
@@ -258,6 +262,15 @@ function UsersTab({
         </p>
       </section>
 
+      {bulk && (
+        <BulkUsersModal
+          onClose={() => setBulk(false)}
+          onDone={() => {
+            load();
+            onChanged();
+          }}
+        />
+      )}
       {creating && (
         <CreateUserModal
           meta={meta}
@@ -280,6 +293,99 @@ function UsersTab({
         </Modal>
       )}
     </div>
+  );
+}
+
+type BulkResult = { created: number; failed: number; results: { row: number; username: string; org_name: string; role: string; temp_password: string | null; error: string | null }[] };
+
+/** 엑셀로 계정 여러 개를 한 번에 만들고, 임시 비밀번호 목록을 돌려준다 */
+function BulkUsersModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<BulkResult | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function upload(f: File) {
+    setBusy(true);
+    setError('');
+    const form = new FormData();
+    form.append('file', f);
+    try {
+      setResult(await api<BulkResult>('/api/admin/users/bulk', { body: form }));
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '등록에 실패했습니다.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const tsv = result
+    ? ['아이디\t기관명\t권한\t임시 비밀번호', ...result.results.filter((r) => r.temp_password).map((r) => `${r.username}\t${r.org_name}\t${ROLE_LABELS[r.role as Role] ?? r.role}\t${r.temp_password}`)].join('\n')
+    : '';
+
+  return (
+    <Modal title={<><FileSpreadsheet className="h-4 w-4" /> 계정 일괄 등록</>} onClose={onClose}>
+      {!result ? (
+        <div className="space-y-3 text-sm text-slate-700 dark:text-slate-200">
+          <p>양식에 아이디·소속 구분·기관명·지역(사업 유형·권한은 선택)을 적어 올리면 승인된 계정이 한 번에 만들어집니다. 한 번에 500명까지 올릴 수 있습니다.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">이름·연락처 등 개인정보는 적지 않습니다. 계정마다 임시 비밀번호가 나오며, 첫 로그인 때 비밀번호를 바꿔야 합니다.</p>
+          <div className="flex flex-wrap gap-2">
+            <a className="btn-secondary" href="/api/admin/users/template">
+              양식 받기
+            </a>
+            <FilePicker accept=".xlsx" label="엑셀 올리기" busy={busy} onFile={upload} />
+          </div>
+          <Notice>{error}</Notice>
+        </div>
+      ) : (
+        <div className="space-y-3 text-sm">
+          <Notice kind={result.failed ? 'info' : 'success'}>
+            {result.created}명을 등록했습니다.{result.failed ? ` ${result.failed}명은 등록하지 못했습니다 (아래 사유 확인).` : ''}
+          </Notice>
+          <p className="text-xs text-amber-700 dark:text-amber-300">임시 비밀번호는 이 창을 닫으면 다시 볼 수 없습니다. 지금 복사해 각 기관에 전달하세요.</p>
+          <div className="max-h-80 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-left text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+                <tr>
+                  <th className="px-2 py-1.5">행</th>
+                  <th className="px-2 py-1.5">아이디</th>
+                  <th className="px-2 py-1.5">기관명</th>
+                  <th className="px-2 py-1.5">결과</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                {result.results.map((r) => (
+                  <tr key={r.row} className="text-slate-700 dark:text-slate-200">
+                    <td className="px-2 py-1.5">{r.row}</td>
+                    <td className="px-2 py-1.5 font-semibold">{r.username}</td>
+                    <td className="px-2 py-1.5">{r.org_name}</td>
+                    <td className="px-2 py-1.5">
+                      {r.temp_password ? <span className="font-mono">{r.temp_password}</span> : <span className="text-red-600 dark:text-red-400">{r.error}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={async () => {
+                await navigator.clipboard.writeText(tsv).catch(() => undefined);
+                setCopied(true);
+              }}
+            >
+              {copied ? '복사했습니다 (엑셀에 붙여 넣기)' : '등록된 계정·임시 비밀번호 복사'}
+            </button>
+            <button type="button" className="btn-primary" onClick={onClose}>
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
