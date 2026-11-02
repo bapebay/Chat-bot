@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { formatTranscript, listMessages } from '../chat.js';
 import type { DB } from '../db.js';
@@ -14,10 +15,17 @@ export function inquiryRoutes(app: FastifyInstance, db: DB) {
   const loggedIn = requireRole(db, 'user');
   const reviewer = requireRole(db, 'reviewer');
 
-  // 내 문의 목록
-  app.get('/api/inquiries', { preHandler: loggedIn }, async (req) =>
-    db.prepare(`${SELECT_INQUIRY} WHERE i.user_id = ? ORDER BY i.id DESC`).all(req.user.id),
-  );
+  // 내 문의 목록. 목록을 열면 새 답변은 읽은 것으로 바꾼다 (이번 응답의 user_unread 로 '새 답변' 표시)
+  app.get('/api/inquiries', { preHandler: loggedIn }, async (req) => {
+    const rows = db.prepare(`${SELECT_INQUIRY} WHERE i.user_id = ? ORDER BY i.id DESC`).all(req.user.id);
+    db.prepare('UPDATE inquiries SET user_unread = 0 WHERE user_id = ? AND user_unread = 1').run(req.user.id);
+    return rows;
+  });
+
+  // 아직 확인하지 않은 답변 수 (상단 '1:1 문의' 배지)
+  app.get('/api/inquiries/unread', { preHandler: loggedIn }, async (req) => ({
+    count: (db.prepare('SELECT COUNT(*) AS n FROM inquiries WHERE user_id = ? AND user_unread = 1').get(req.user.id) as { n: number }).n,
+  }));
 
   app.post('/api/inquiries', { preHandler: loggedIn }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
@@ -57,10 +65,21 @@ export function inquiryRoutes(app: FastifyInstance, db: DB) {
     if (!answer) return reply.code(400).send({ error: '답변 내용을 입력해 주세요.' });
     const info = db
       .prepare(
-        `UPDATE inquiries SET answer = ?, answered_by = ?, status = 'answered', answered_at = datetime('now') WHERE id = ?`,
+        `UPDATE inquiries SET answer = ?, answered_by = ?, status = 'answered', answered_at = datetime('now'), user_unread = 1 WHERE id = ?`,
       )
       .run(answer, req.user.id, id);
     if (!info.changes) return reply.code(404).send({ error: '문의를 찾을 수 없습니다.' });
+    return db.prepare(`${SELECT_INQUIRY} WHERE i.id = ?`).get(id);
+  });
+
+  // 문의 답변을 표준답안으로 등록했다고 표시 (표준답안 저장은 /api/review/qa 가 한다)
+  app.post('/api/manage/inquiries/:id/qa', { preHandler: reviewer }, async (req, reply) => {
+    const id = idParam((req.params as { id: string }).id);
+    const qaId = str(((req.body ?? {}) as Record<string, unknown>).qa_id);
+    if (!qaId) return reply.code(400).send({ error: '통합번호가 없습니다.' });
+    const info = db.prepare('UPDATE inquiries SET qa_id = ? WHERE id = ?').run(qaId, id);
+    if (!info.changes) return reply.code(404).send({ error: '문의를 찾을 수 없습니다.' });
+    audit(db, req.user, '문의 답변을 표준답안으로 등록', `문의 #${id}`, qaId);
     return db.prepare(`${SELECT_INQUIRY} WHERE i.id = ?`).get(id);
   });
 }

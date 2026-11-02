@@ -42,12 +42,12 @@ function normHeader(s: string): string {
   return s.replace(/\(.*?\)/g, '').replace(/\s/g, '').toLowerCase();
 }
 
-function cellText(cell: ExcelJS.Cell): string {
+export function cellText(cell: ExcelJS.Cell): string {
   return (cell.text ?? '').replace(/\r\n/g, '\n').trim();
 }
 
 /** 머리글 행(처음 10행 안)을 찾아 열 번호를 정한다 */
-function findColumns<F extends string>(sheet: ExcelJS.Worksheet, headers: Record<F, string[]>, required: NoInfer<F>[]) {
+export function findColumns<F extends string>(sheet: ExcelJS.Worksheet, headers: Record<F, string[]>, required: NoInfer<F>[]) {
   for (let r = 1; r <= Math.min(10, sheet.rowCount); r++) {
     const row = sheet.getRow(r);
     const cols = {} as Partial<Record<F, number>>;
@@ -75,7 +75,7 @@ function parseReferral(raw: string): { is_referral: number; referral_answer: str
   return { is_referral: 1, referral_answer: v };
 }
 
-async function loadWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
+export async function loadWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
   try {
     await wb.xlsx.load(buffer as unknown as ArrayBuffer);

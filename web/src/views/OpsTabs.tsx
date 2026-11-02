@@ -99,6 +99,37 @@ function RatioBars({ title, rows }: { title: string; rows: { label: string; n: n
   );
 }
 
+/** 최근 12개월 (한국 시간 기준 'YYYY-MM') */
+function recentMonths(): string[] {
+  const now = new Date(Date.now() + 9 * 3600_000);
+  return Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  });
+}
+
+/** 월간 운영 보고서 엑셀 받기 (내부 보고용) */
+function MonthlyReport() {
+  const months = recentMonths();
+  const [month, setMonth] = useState(months[0]);
+  return (
+    <section className="card flex flex-wrap items-center gap-3 p-3 text-sm">
+      <span className="font-semibold text-slate-700 dark:text-slate-200">월간 운영 보고서</span>
+      <select className="rounded border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-900" value={month} onChange={(e) => setMonth(e.target.value)}>
+        {months.map((m) => (
+          <option key={m} value={m}>
+            {m.replace('-', '년 ')}월
+          </option>
+        ))}
+      </select>
+      <a className="btn-secondary" href={`/api/admin/report?month=${month}`}>
+        엑셀 받기
+      </a>
+      <span className="text-xs text-slate-500 dark:text-slate-400">요약 · 일별 · 지역·소속별 · 많이 묻는 주제 · 근거 없음 질문 · 1대1 문의</span>
+    </section>
+  );
+}
+
 export function StatsTab() {
   const [days, setDays] = useState(30);
   const [s, setS] = useState<Stats | null>(null);
@@ -146,6 +177,7 @@ export function StatsTab() {
           ))}
         </div>
       </div>
+      <MonthlyReport />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="질문 수" value={s.totals.questions.toLocaleString()} sub={`AI 호출 ${s.totals.llm_calls.toLocaleString()}회 (나머지는 근거 없음·범위 외로 호출 안 함)`} />
         <Tile label="추정 비용" value={won(s.totals.cost_krw)} sub={`질문당 ${s.totals.questions ? won(s.totals.cost_krw / s.totals.questions) : '-'}`} />

@@ -71,6 +71,8 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
+  /** 답변할 때 쓰던 표준답안 차수 */
+  basis?: { qa_version: string; applied_at: string | null } | null;
   /** 보안 의심으로 막은 경우 그 종류 */
   security?: string;
   retrieved?: {
@@ -108,6 +110,10 @@ export interface Inquiry {
   status: 'pending' | 'answered';
   created_at: string;
   answered_at: string | null;
+  /** 내가 아직 확인하지 않은 답변 (내 문의 목록에서만) */
+  user_unread?: number;
+  /** 이 문의 답변으로 만든 표준답안 통합번호 */
+  qa_id?: string | null;
 }
 
 export interface SettingRevision {

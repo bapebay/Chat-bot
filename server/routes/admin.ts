@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { accountProblem, buildAccountsTemplate, createAccount, parseAccountsWorkbook, type AccountInput } from '../accounts.js';
 import { audit } from '../audit.js';
 import { backupDatabase, listBackups } from '../backup.js';
 import {
@@ -11,11 +12,12 @@ import {
 } from '../auth.js';
 import { listMessages } from '../chat.js';
 import { config } from '../config.js';
-import { BUSINESS_TYPES, ORG_TYPES, REGIONS, ROLES, type Role } from '../constants.js';
+import { ROLES, type Role } from '../constants.js';
 import type { DB } from '../db.js';
 import type { KnowledgeBase } from '../knowledge/index.js';
 import type { LlmClient } from '../llm/index.js';
 import { getRevision, getSetting, isSettingKey, listRevisions, setSetting, settingProblem } from '../settings.js';
+import { readUpload, sendXlsx } from './knowledge.js';
 import { idParam, str } from './util.js';
 
 export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowledge: KnowledgeBase) {
@@ -47,32 +49,47 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
 
   app.post('/api/admin/users', { preHandler: admin }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
-    const username = str(b.username);
-    const role = str(b.role) as Role;
-    const orgType = str(b.org_type);
-    const orgName = str(b.org_name);
-    const region = str(b.region);
-    const businessType = str(b.business_type) || '모름';
-    if (!/^[A-Za-z0-9._-]{4,30}$/.test(username)) {
-      return reply.code(400).send({ error: '아이디는 영문·숫자·._- 조합 4~30자로 입력해 주세요.' });
-    }
-    if (!ROLES.includes(role)) return reply.code(400).send({ error: '권한을 선택해 주세요.' });
-    if (!(ORG_TYPES as readonly string[]).includes(orgType)) return reply.code(400).send({ error: '소속 구분을 선택해 주세요.' });
-    if (!orgName) return reply.code(400).send({ error: '기관명을 입력해 주세요.' });
-    if (!(REGIONS as readonly string[]).includes(region)) return reply.code(400).send({ error: '지역을 선택해 주세요.' });
-    if (!(BUSINESS_TYPES as readonly string[]).includes(businessType)) {
-      return reply.code(400).send({ error: '사업 유형을 선택해 주세요.' });
-    }
-    if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(username)) {
-      return reply.code(409).send({ error: '이미 사용 중인 아이디입니다.' });
-    }
-    const tempPassword = generateTempPassword();
-    db.prepare(
-      `INSERT INTO users (username, password_hash, org_type, org_name, region, business_type, role, status, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', 1)`,
-    ).run(username, hashPassword(tempPassword), orgType, orgName, region, businessType, role);
-    audit(db, req.user, '계정 생성', username, `권한 ${role}`);
+    const input: AccountInput = {
+      username: str(b.username),
+      role: str(b.role),
+      org_type: str(b.org_type),
+      org_name: str(b.org_name),
+      region: str(b.region),
+      business_type: str(b.business_type) || '모름',
+    };
+    const problem = accountProblem(db, input);
+    if (problem) return reply.code(problem.startsWith('이미') ? 409 : 400).send({ error: problem });
+    const tempPassword = await createAccount(db, input);
+    audit(db, req.user, '계정 생성', input.username, `권한 ${input.role}`);
     return { ok: true, temp_password: tempPassword };
+  });
+
+  // ----- 계정 일괄 등록 (엑셀) -----
+  app.get('/api/admin/users/template', { preHandler: admin }, async (_req, reply) =>
+    sendXlsx(reply, await buildAccountsTemplate(), '계정_일괄등록_양식.xlsx'),
+  );
+
+  app.post('/api/admin/users/bulk', { preHandler: admin }, async (req, reply) => {
+    const up = await readUpload(req, reply, /\.xlsx$/i);
+    if (!up) return reply;
+    let rows: Awaited<ReturnType<typeof parseAccountsWorkbook>>;
+    try {
+      rows = await parseAccountsWorkbook(up.buffer);
+    } catch (e) {
+      return reply.code(400).send({ error: (e as Error).message });
+    }
+    if (!rows.length) return reply.code(400).send({ error: '등록할 계정이 없습니다. 예시 행 아래에 계정을 적어 주세요.' });
+    const seen = new Set<string>();
+    const results: { row: number; username: string; org_name: string; role: string; temp_password: string | null; error: string | null }[] = [];
+    for (const { row, input } of rows) {
+      const problem = seen.has(input.username) ? '파일 안에 같은 아이디가 또 있습니다.' : accountProblem(db, input);
+      seen.add(input.username);
+      const tempPassword = problem ? null : await createAccount(db, input);
+      results.push({ row, username: input.username, org_name: input.org_name, role: input.role, temp_password: tempPassword, error: problem });
+    }
+    const created = results.filter((r) => r.temp_password).length;
+    audit(db, req.user, '계정 일괄 등록', up.filename, `${created}명 등록, ${results.length - created}명 실패`);
+    return { created, failed: results.length - created, results };
   });
 
   app.post('/api/admin/users/:id/approve', { preHandler: admin }, async (req, reply) => {

@@ -3,7 +3,9 @@ import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { stripDisclaimer } from '../chat.js';
 import type { DB } from '../db.js';
+import { buildMonthlyReport, monthRangeUtc } from '../report.js';
 import { getNumberSetting } from '../settings.js';
+import { sendXlsx } from './knowledge.js';
 import { idParam, str } from './util.js';
 
 // SQLite UTC 시각 → 한국 날짜
@@ -14,6 +16,13 @@ export function adminOpsRoutes(app: FastifyInstance, db: DB) {
   const admin = requireRole(db, 'admin');
 
   // ================= 사용량·비용 =================
+  // 월간 운영 보고서 (엑셀)
+  app.get('/api/admin/report', { preHandler: admin }, async (req, reply) => {
+    const month = str((req.query as Record<string, unknown>).month);
+    if (!monthRangeUtc(month)) return reply.code(400).send({ error: '월을 YYYY-MM 형식으로 지정해 주세요.' });
+    return sendXlsx(reply, await buildMonthlyReport(db, month), `챗봇_월간운영보고서_${month}.xlsx`);
+  });
+
   app.get('/api/admin/stats', { preHandler: admin }, async (req) => {
     const days = Math.min(365, Math.max(1, Number((req.query as Record<string, unknown>).days) || 30));
     const since = `-${days} days`;

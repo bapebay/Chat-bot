@@ -45,6 +45,8 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
+  /** 답변할 때 쓰던 표준답안 차수 (예: '중복질의_통합_표준답안초안_5차', 적용 시각) */
+  basis?: { qa_version: string; applied_at: string | null } | null;
   /** 보안 의심으로 막은 경우 그 종류 (예: '지시 무시 요청') */
   security?: string;
   /** 검색 기록 (검토·통계용) */
@@ -222,6 +224,14 @@ function overlapsEvidence(query: string, r: SearchResult): boolean {
   return texts.some((t) => tokenize(t).some((tok) => tokens.has(tok)));
 }
 
+/** 지금 서비스 중인 표준답안 차수 (답변마다 기록해 두면 나중에 어느 기준의 답인지 알 수 있다) */
+function answerBasis(db: DB): Citations['basis'] {
+  const v = db
+    .prepare(`SELECT filename, activated_at FROM qa_versions WHERE status = 'active' ORDER BY activated_at DESC, id DESC LIMIT 1`)
+    .get() as { filename: string; activated_at: string | null } | undefined;
+  return v ? { qa_version: v.filename.replace(/\.xlsx$/i, ''), applied_at: v.activated_at } : null;
+}
+
 /** 공격 의심 질문·지시문이 섞인 답변 대신 돌려주는 거절 답변 */
 function blockedAnswer(reason: string): Pick<Answer, 'text' | 'answerType' | 'citations'> {
   return {
@@ -277,6 +287,7 @@ export async function generateAnswer(
     qa: [],
     guideline: [],
     out_of_scope: null,
+    basis: answerBasis(db),
     retrieved: retrievedLog(result),
   };
   const noModel = { provider: null, model: null, inputTokens: null, outputTokens: null };
