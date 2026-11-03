@@ -9,6 +9,7 @@ import { parseEvalWorkbook } from '../../../server/evaluation-excel';
 import { parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
+import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
 import { DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, REGIONS_17, type DemoQa } from './data';
@@ -217,6 +218,18 @@ function overlapsEvidence(query: string, r: Json): boolean {
 function generateAnswer(history: Json[], businessType: string, question: string) {
   const query = question.replace(/\[(?:전화번호|이메일|주민등록번호|계좌번호)\]/g, ' ');
   let r = search(query, businessType);
+  // 서버와 같은 규칙: 한 메시지에 질문이 여럿이면 하나씩 찾아 근거를 합친다
+  let parts = splitQuestions(query);
+  if (parts.length === 1 && !r.passed) parts = splitByAnd(query);
+  const partResults = parts.length > 1 ? parts.map((p) => search(p, businessType)) : [];
+  if (partResults.length) {
+    r = mergeSearchResults(r, partResults, { qa: (h: Json) => h.doc.id, guideline: (h: Json) => h.doc.id }, {
+      perPart: 3,
+      maxQa: Math.min(12, Math.max(num('top_k_qa'), 3 * parts.length)),
+      maxGuide: Math.min(6, num('top_k_guideline') + parts.length),
+    });
+  }
+  const multi = partResults.length ? multiQuestionNote(parts, partResults.map((p) => p.passed)) : '';
   const prevQ = [...history]
     .map((m, i) => ({ m, i }))
     .reverse()
@@ -254,12 +267,17 @@ function generateAnswer(history: Json[], businessType: string, question: string)
       citations: { ...base, referral: '담당자' },
       model: false,
       r,
+      multi,
     };
   }
   const relQa = r.qa.filter((h: Json) => h.relevant);
   const top = relQa[0];
-  const referral = top?.doc.is_referral;
-  const citedQa = (referral ? relQa.slice(0, 1) : relQa.slice(0, 2)).map((h: Json) => h.doc);
+  // 여러 질문이면 질문마다 가장 맞는 답안 하나씩
+  const perPart = partResults.map((p) => p.qa.find((h: Json) => h.relevant)?.doc).filter(Boolean);
+  const referral = perPart.length ? perPart.every((d: Json) => d.is_referral) : top?.doc.is_referral;
+  const citedQa = perPart.length
+    ? [...new Map(perPart.map((d: Json) => [d.id, d])).values()]
+    : (referral ? relQa.slice(0, 1) : relQa.slice(0, 2)).map((h: Json) => h.doc);
   const g = r.guideline.findIndex((h: Json) => h.relevant);
   const citedGuide = g >= 0 ? [{ ...r.guideline[g].doc, id: `G${g + 1}` }] : [];
   const lines = [
@@ -298,6 +316,7 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     },
     model: true,
     r,
+    multi,
   };
 }
 
@@ -371,7 +390,7 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   let recent = history.slice(-6);
   while (recent.length && recent[0].role !== 'user') recent = recent.slice(1);
   const hist = recent.map((m) => `${m.role === 'user' ? '사용자' : '챗봇'}: ${stripDisclaimer(m.content)}`).join('\n\n');
-  const input = `${system}\n\n# 이전 대화\n${hist || '(없음)'}\n\n[근거 자료]\n${buildContext(r)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n[질문]\n${question}`;
+  const input = `${system}\n\n# 이전 대화\n${hist || '(없음)'}\n\n[근거 자료]\n${buildContext(r)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n${t.multi ? `${t.multi}\n\n` : ''}[질문]\n${question}`;
   const started = Date.now();
   let text: string;
   try {

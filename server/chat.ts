@@ -5,9 +5,10 @@ import { qaSearchText, strength, type GuidelineDoc, type Hit, type KnowledgeBase
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions } from './knowledge/guard.js';
+import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from './knowledge/split.js';
 export { looksLikeFollowUp };
 import type { ChatTurn, LlmClient } from './llm/index.js';
-import { getSetting } from './settings.js';
+import { getNumberSetting, getSetting } from './settings.js';
 
 export interface MessageRow {
   id: number;
@@ -264,6 +265,20 @@ export async function generateAnswer(
   // 가린 개인정보 표시([전화번호] 등)는 검색어에서 뺀다
   const query = question.replace(/\[(?:전화번호|이메일|주민등록번호|계좌번호)\]/g, ' ');
   let result = await kb.search(query, businessType);
+  // 한 메시지에 질문이 여럿이면 하나씩 찾아 근거를 합친다 (붙여 찾으면 근거가 탈락함)
+  let parts = splitQuestions(query);
+  if (parts.length === 1 && !result.passed) parts = splitByAnd(query);
+  const partResults = parts.length > 1 ? await Promise.all(parts.map((p) => kb.search(p, businessType))) : [];
+  if (partResults.length) {
+    const topQa = getNumberSetting(db, 'top_k_qa');
+    const topGuide = getNumberSetting(db, 'top_k_guideline');
+    result = mergeSearchResults(
+      result,
+      partResults,
+      { qa: (h) => h.doc.id, guideline: (h) => h.doc.id },
+      { perPart: 3, maxQa: Math.min(12, Math.max(topQa, 3 * parts.length)), maxGuide: Math.min(6, topGuide + parts.length) },
+    );
+  }
   // 짧은 후속 질문("그럼 글로컬은요?")은 직전 질문과 합쳐 다시 찾아본다
   // 근거를 찾아 답했던 가장 최근의 '원래 질문' (이어 묻는 말은 건너뛴다. 엉뚱한 질문 뒤에 이어 물어도 앞 주제를 잇는다)
   const prevQuestion = history.findLast(
@@ -310,7 +325,9 @@ export async function generateAnswer(
     ...recentHistory(history, config.llm.historyMessages),
     {
       role: 'user',
-      content: `[근거 자료]\n${buildContext(result)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n[질문]\n${question}`,
+      content: `[근거 자료]\n${buildContext(result)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n${
+        partResults.length ? `${multiQuestionNote(parts, partResults.map((r) => r.passed))}\n\n` : ''
+      }[질문]\n${question}`,
     },
   ];
   const system = buildSystemPrompt(db);
