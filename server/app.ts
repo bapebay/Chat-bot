@@ -4,7 +4,7 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, type TrustProxy } from './config.js';
+import { config, TRUST_PROXY } from './config.js';
 import { BUSINESS_TYPES, ORG_TYPES, REGIONS } from './constants.js';
 import type { DB } from './db.js';
 import type { KnowledgeBase } from './knowledge/index.js';
@@ -15,9 +15,8 @@ import { conversationRoutes } from './routes/conversations.js';
 import { inquiryRoutes } from './routes/inquiries.js';
 import { knowledgeRoutes, MAX_UPLOAD_BYTES } from './routes/knowledge.js';
 import { adminOpsRoutes } from './routes/admin-ops.js';
-import { evaluationRoutes } from './routes/evaluation.js';
 import { operationsRoutes } from './routes/operations.js';
-import { DEFAULT_RATE_RULES, rateLimit, securityHeaders, staffIpGuard } from './security.js';
+import { DEFAULT_RATE_RULES, rateLimit, securityHeaders } from './security.js';
 
 export interface BuildOptions {
   db: DB;
@@ -28,8 +27,8 @@ export interface BuildOptions {
   /** IP별 요청 횟수 제한 (실서비스는 켬, 테스트는 기본 끔) */
   rateLimit?: boolean;
   /** 관리 메뉴를 쓸 수 있는 IP·대역 (비우면 제한 없음) */
-  staffAllowedIps?: string[];
-  trustProxy?: TrustProxy;
+  /** 테스트용: 프록시 신뢰 방식을 바꿀 때 */
+  trustProxy?: boolean | string | ((addr: string, hop: number) => boolean);
 }
 
 export async function buildApp({
@@ -39,12 +38,10 @@ export async function buildApp({
   logger = false,
   webDir,
   rateLimit: limitRequests = false,
-  staffAllowedIps = [],
-  trustProxy = false,
+  trustProxy = TRUST_PROXY,
 }: BuildOptions) {
   const app = Fastify({ logger, bodyLimit: 1024 * 1024, trustProxy });
   securityHeaders(app, { hsts: config.cookieSecure });
-  staffIpGuard(app, staffAllowedIps);
   if (limitRequests) rateLimit(app, DEFAULT_RATE_RULES);
   await app.register(cookie);
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
@@ -61,7 +58,6 @@ export async function buildApp({
   inquiryRoutes(app, db);
   adminRoutes(app, db, llm, kb);
   knowledgeRoutes(app, db, kb);
-  evaluationRoutes(app, db, llm, kb);
   operationsRoutes(app, db, kb);
   adminOpsRoutes(app, db);
 

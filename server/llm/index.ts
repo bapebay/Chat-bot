@@ -21,7 +21,7 @@ function createMockClient(): LlmClient {
       // 가장 관련 있는 답안이 연결형이면 연결형으로 답하는 흉내를 낸다
       const referral = qaHeads[0]?.[2] === '예';
       const qaIds = (referral ? qaHeads.slice(0, 1) : qaHeads.slice(0, 2)).map((m) => m[1].trim());
-      const guide = [...last.matchAll(/\[지침 (G\d+) \| ([^|\]]*)(?:\| [^|\]]*)?\| 쪽: ([^\]]*)\]/g)].slice(0, 1);
+      const guide = [...last.matchAll(/\[지침 및 FAQ (G\d+) \| ([^|\]]*)\| 문서: [^|\]]*\| 쪽: ([^\]]*)\]/g)].slice(0, 1);
       await new Promise((r) => setTimeout(r, 400));
       const body = [
         `**질의 요약**: ${question.slice(0, 80)}`,

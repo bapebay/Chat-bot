@@ -13,24 +13,11 @@ function intOrZero(name: string, fallback: number): number {
   return Number.isFinite(v) && v >= 0 ? v : fallback;
 }
 
-/** 쉼표로 구분한 목록 */
-function list(name: string): string[] {
-  return (process.env[name] || '').split(',').map((s) => s.trim()).filter(Boolean);
-}
-
-/** 앞단 웹서버(프록시) 신뢰 설정: 비우면 끔, true, 거칠 프록시 수(숫자), 또는 프록시 IP·대역 목록 */
-export type TrustProxy = boolean | string | ((addr: string, hop: number) => boolean);
-
-function trustProxy(): TrustProxy {
-  const v = (process.env.TRUST_PROXY || '').trim();
-  if (!v || v === 'false') return false;
-  if (v === 'true') return true;
-  if (/^\d+$/.test(v)) {
-    const hops = Number(v);
-    return (_addr: string, hop: number) => hop < hops;
-  }
-  return v;
-}
+/**
+ * 앞단 웹서버(프록시) 신뢰: 같은 서버나 내부망(사설 IP)에 있는 웹서버만 믿고 실제 접속자 IP를 읽는다.
+ * 설정 없이 동작하도록 고정 (점검표 결정). 외부에서 보낸 X-Forwarded-For 는 믿지 않는다.
+ */
+export const TRUST_PROXY = 'loopback, linklocal, uniquelocal';
 
 export type LlmProvider = 'gemini' | 'claude' | 'openai' | 'mock';
 
@@ -49,10 +36,7 @@ export const config = {
   sessionHours: int('SESSION_HOURS', 8),
   cookieSecure: process.env.COOKIE_SECURE === 'true',
   security: {
-    trustProxy: trustProxy(),
     rateLimit: process.env.RATE_LIMIT !== 'off',
-    /** 관리자 메뉴를 쓸 수 있는 IP·대역 (비우면 제한 없음) */
-    staffAllowedIps: list('ADMIN_ALLOWED_IPS'),
   },
   backup: {
     dir: process.env.BACKUP_DIR || './backups',

@@ -82,21 +82,6 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
     return { ok: true };
   });
 
-  // ================= 자주 묻는 질문 (중분류별 대표 질문) =================
-  app.get('/api/suggestions', { preHandler: loggedIn }, async () => {
-    const vid = activeVersionId(db);
-    if (!vid) return [];
-    const includeUnreviewed = getSetting(db, 'include_unreviewed') === 'true';
-    const rows = (db.prepare('SELECT category2, question, review_status FROM qa_items WHERE version_id = ? ORDER BY id').all(vid) as {
-      category2: string;
-      question: string;
-      review_status: string;
-    }[]).filter((r) => r.category2 && (includeUnreviewed || isConfirmed(r.review_status)));
-    const seen = new Map<string, string>();
-    for (const r of rows) if (!seen.has(r.category2) && r.question.length <= 60) seen.set(r.category2, r.question);
-    return [...seen.entries()].slice(0, 8).map(([category, question]) => ({ category, question }));
-  });
-
   // ================= 검토 대기함 =================
   app.get('/api/review/queue', { preHandler: admin }, async (req) => {
     const q = req.query as Record<string, unknown>;

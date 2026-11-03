@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { answerQuestion, listMessages, titleFromQuestion } from '../chat.js';
-import { BUSINESS_TYPES } from '../constants.js';
+import { BUSINESS_TYPES, DEFAULT_BUSINESS_TYPE } from '../constants.js';
 import type { DB } from '../db.js';
 import type { KnowledgeBase } from '../knowledge/index.js';
 import { maskPii } from '../knowledge/text.js';
@@ -21,6 +21,8 @@ interface ConversationRow {
 }
 
 const MAX_QUESTION_LENGTH = 3000;
+
+const MOBILE_UA = /Android|iPhone|iPad|iPod|Mobi/i;
 
 export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient, kb: KnowledgeBase) {
   const loggedIn = requireRole(db, 'user');
@@ -53,7 +55,7 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
 
   app.post('/api/conversations', { preHandler: loggedIn }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
-    const businessType = str(b.business_type) || req.user.business_type;
+    const businessType = str(b.business_type) || DEFAULT_BUSINESS_TYPE;
     if (!(BUSINESS_TYPES as readonly string[]).includes(businessType)) {
       return reply.code(400).send({ error: '사업 유형을 선택해 주세요.' });
     }
@@ -95,6 +97,10 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
   app.post('/api/conversations/:id/messages', { preHandler: loggedIn }, async (req, reply) => {
     const conv = ownConversation(req.user.id, (req.params as { id: string }).id);
     if (!conv) return reply.code(404).send({ error: '대화를 찾을 수 없습니다.' });
+    // 모바일 이용은 막는다 (AI 사용량 과다 우려, 점검표 결정). 화면도 막지만 서버에서 한 번 더 확인
+    if (MOBILE_UA.test(req.headers['user-agent'] ?? '')) {
+      return reply.code(403).send({ error: 'PC(컴퓨터) 웹 브라우저에서 이용해 주세요.', code: 'MOBILE_BLOCKED' });
+    }
     const raw = str(((req.body ?? {}) as Record<string, unknown>).content);
     if (!raw) return reply.code(400).send({ error: '질문을 입력해 주세요.' });
     // 화면에서 한 번 경고하지만, 서버도 저장·모델 전송 전에 개인정보 패턴을 항상 가린다

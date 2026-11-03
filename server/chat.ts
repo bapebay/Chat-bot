@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import type { DB } from './db.js';
 import { OUTPUT_INSTRUCTIONS, SECURITY_RULES } from './defaults.js';
-import { qaSearchText, strength, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
+import { qaSearchText, strength, TOP_K_PRINCIPLE, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions } from './knowledge/guard.js';
@@ -46,8 +46,6 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
-  /** 답변할 때 쓰던 표준답안 차수 (예: '중복질의_통합_표준답안초안_5차', 적용 시각) */
-  basis?: { qa_version: string; applied_at: string | null } | null;
   /** 보안 의심으로 막은 경우 그 종류 (예: '지시 무시 요청') */
   security?: string;
   /** 검색 기록 (검토·통계용) */
@@ -55,6 +53,8 @@ export interface Citations {
     mode: SearchResult['mode'];
     qa: { qa_id: string; keyword: number; semantic: number | null; relevant: boolean }[];
     guideline: { id: string; clause: string; keyword: number; semantic: number | null; relevant: boolean }[];
+    /** 집행원리 (이 기능 이전 답변에는 없음) */
+    principle?: { code: string; keyword: number; semantic: number | null; relevant: boolean }[];
   };
 }
 
@@ -83,14 +83,12 @@ export const ANSWER_JSON_SCHEMA = {
 } as const;
 
 /**
- * 시스템 프롬프트 = 관리자 프롬프트 + 답변 원칙 + 출력 형식.
+ * 시스템 프롬프트 = 관리자 프롬프트 + 보안 규칙 + 출력 형식.
  * 매 질문 같은 내용이어야 캐시가 되므로 질문마다 바뀌는 근거 자료는 사용자 메시지 쪽에 넣는다.
  */
 export function buildSystemPrompt(db: DB): string {
-  const principles = getSetting(db, 'principles').trim();
   return [
     getSetting(db, 'system_prompt'),
-    principles ? `# 답변 원칙 (담당자가 검수하며 정한 기준, 항상 지킨다)\n${principles}` : '',
     SECURITY_RULES,
     OUTPUT_INSTRUCTIONS,
   ]
@@ -106,7 +104,24 @@ function guidelineKey(h: Hit<GuidelineDoc>, i: number) {
 
 /** 검색된 근거를 모델에 넘길 글로 만든다 */
 export function buildContext(result: SearchResult): string {
+  // 근거 계층 순서대로: 1단계 지침 및 FAQ → 2단계 집행원리 → 3단계 표준답안 (시스템 프롬프트의 꼬리표와 같게)
   const parts: string[] = [];
+  result.guideline.forEach((h, i) => {
+    const d = h.doc;
+    parts.push(`[지침 및 FAQ ${guidelineKey(h, i)} | ${clean(d.clause)} | 문서: ${clean(d.doc_name)} | 쪽: ${d.page ?? ''}]\n${d.text}`);
+  });
+  result.principle.forEach((h, i) => {
+    const d = h.doc;
+    parts.push(
+      [
+        `[집행원리 P${i + 1} | 번호: ${clean(d.code)} | 분야: ${clean(d.category) || '-'} | 재원: ${clean(d.funding) || '-'} | 적용 시기: ${clean(d.period) || '-'}]`,
+        d.text,
+        d.note ? `비고: ${d.note}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  });
   for (const h of result.qa) {
     const d = h.doc;
     parts.push(
@@ -122,12 +137,6 @@ export function buildContext(result: SearchResult): string {
         .join('\n'),
     );
   }
-  result.guideline.forEach((h, i) => {
-    const d = h.doc;
-    parts.push(
-      `[지침 ${guidelineKey(h, i)} | ${clean(d.clause)} | 문서: ${clean(d.doc_name)} | 쪽: ${d.page ?? ''}]\n${d.text}`,
-    );
-  });
   return parts.join('\n\n');
 }
 
@@ -166,6 +175,12 @@ function retrievedLog(result: SearchResult): Citations['retrieved'] {
     guideline: result.guideline.map((h, i) => ({
       id: guidelineKey(h, i),
       clause: h.doc.clause,
+      keyword: round(h.keyword),
+      semantic: h.semantic === null ? null : round(h.semantic),
+      relevant: h.relevant,
+    })),
+    principle: result.principle.map((h) => ({
+      code: h.doc.code,
       keyword: round(h.keyword),
       semantic: h.semantic === null ? null : round(h.semantic),
       relevant: h.relevant,
@@ -225,14 +240,6 @@ function overlapsEvidence(query: string, r: SearchResult): boolean {
   return texts.some((t) => tokenize(t).some((tok) => tokens.has(tok)));
 }
 
-/** 지금 서비스 중인 표준답안 차수 (답변마다 기록해 두면 나중에 어느 기준의 답인지 알 수 있다) */
-function answerBasis(db: DB): Citations['basis'] {
-  const v = db
-    .prepare(`SELECT filename, activated_at FROM qa_versions WHERE status = 'active' ORDER BY activated_at DESC, id DESC LIMIT 1`)
-    .get() as { filename: string; activated_at: string | null } | undefined;
-  return v ? { qa_version: v.filename.replace(/\.xlsx$/i, ''), applied_at: v.activated_at } : null;
-}
-
 /** 공격 의심 질문·지시문이 섞인 답변 대신 돌려주는 거절 답변 */
 function blockedAnswer(reason: string): Pick<Answer, 'text' | 'answerType' | 'citations'> {
   return {
@@ -245,7 +252,7 @@ function blockedAnswer(reason: string): Pick<Answer, 'text' | 'answerType' | 'ci
       guideline: [],
       out_of_scope: null,
       security: reason,
-      retrieved: { mode: 'keyword', qa: [], guideline: [] },
+      retrieved: { mode: 'keyword', qa: [], guideline: [], principle: [] },
     },
   };
 }
@@ -275,8 +282,8 @@ export async function generateAnswer(
     result = mergeSearchResults(
       result,
       partResults,
-      { qa: (h) => h.doc.id, guideline: (h) => h.doc.id },
-      { perPart: 3, maxQa: Math.min(12, Math.max(topQa, 3 * parts.length)), maxGuide: Math.min(6, topGuide + parts.length) },
+      { qa: (h) => h.doc.id, guideline: (h) => h.doc.id, principle: (h) => h.doc.id },
+      { perPart: 3, maxQa: Math.min(12, Math.max(topQa, 3 * parts.length)), maxGuide: Math.min(6, topGuide + parts.length), maxPrinciple: Math.min(8, TOP_K_PRINCIPLE + parts.length) },
     );
   }
   // 짧은 후속 질문("그럼 글로컬은요?")은 직전 질문과 합쳐 다시 찾아본다
@@ -302,12 +309,15 @@ export async function generateAnswer(
     qa: [],
     guideline: [],
     out_of_scope: null,
-    basis: answerBasis(db),
     retrieved: retrievedLog(result),
   };
   const noModel = { provider: null, model: null, inputTokens: null, outputTokens: null };
 
-  const bestEvidence = Math.max(strength(result.qa.find((h) => h.relevant)), strength(result.guideline.find((h) => h.relevant)));
+  const bestEvidence = Math.max(
+    strength(result.qa.find((h) => h.relevant)),
+    strength(result.guideline.find((h) => h.relevant)),
+    strength(result.principle.find((h) => h.relevant)),
+  );
   if (result.outOfScope && strength(result.outOfScope) >= bestEvidence) {
     const o = result.outOfScope.doc;
     return {
@@ -325,7 +335,7 @@ export async function generateAnswer(
     ...recentHistory(history, config.llm.historyMessages),
     {
       role: 'user',
-      content: `[근거 자료]\n${buildContext(result)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n${
+      content: `<근거자료>\n${buildContext(result)}\n</근거자료>\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n${
         partResults.length ? `${multiQuestionNote(parts, partResults.map((r) => r.passed))}\n\n` : ''
       }[질문]\n${question}`,
     },

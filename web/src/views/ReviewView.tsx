@@ -47,28 +47,13 @@ const SOURCE_LABEL: Record<QueueItem['source'], string> = { bad: 'Bad 평가', n
 const RESOLUTION_LABEL: Record<string, string> = { edited: '기존 답안 수정', added: '새 답안 추가', ignored: '무시' };
 const errorText = (err: unknown, fb: string) => (err instanceof ApiError ? err.message : fb);
 
-export function ReviewView({ user }: { user: User }) {
-  const [tab, setTab] = useState<'queue' | 'qa'>('queue');
+/** 상단 '검수' 메뉴: 검토 대기함 (표준답안 관리는 관리 → 지식 데이터로 옮김) */
+export function ReviewView() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-900">
-      <nav className="flex gap-1 border-b border-slate-200 bg-white px-3 pt-2 dark:border-slate-700 dark:bg-slate-800">
-        {(
-          [
-            ['queue', '검토 대기함'],
-            ['qa', '표준답안 관리'],
-          ] as const
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setTab(k)}
-            className={`border-b-2 px-3 py-2 text-sm font-medium ${tab === k ? 'border-indigo-600 text-indigo-700 dark:text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-      <div className="flex-1 overflow-y-auto">{tab === 'queue' ? <QueuePanel /> : <QaPanel isAdmin={user.role === 'admin'} />}</div>
+      <div className="flex-1 overflow-y-auto">
+        <QueuePanel />
+      </div>
     </div>
   );
 }
@@ -335,7 +320,7 @@ export function QaEditorModal({
 
 // ================= 표준답안 관리 =================
 
-function QaPanel({ isAdmin }: { isAdmin: boolean }) {
+export function QaPanel({ isAdmin }: { isAdmin: boolean }) {
   const [q, setQ] = useState('');
   const [filters, setFilters] = useState({ category1: '', category2: '', review_status: '', recheck: false });
   const [facets, setFacets] = useState<{ category1: string[]; category2: string[]; review_status: string[] }>({ category1: [], category2: [], review_status: [] });

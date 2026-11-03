@@ -120,6 +120,29 @@ CREATE TABLE IF NOT EXISTS out_of_scope (
   department TEXT NOT NULL DEFAULT ''
 );
 
+-- 집행원리: 질의응답 사례에서 뽑은 일반 집행 기준 (근거 2단계). CSV 한 번 올릴 때마다 한 묶음, 하나만 사용 중
+CREATE TABLE IF NOT EXISTS principle_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'archived',
+  item_count INTEGER NOT NULL DEFAULT 0,
+  warnings TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  activated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS principles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  set_id INTEGER NOT NULL REFERENCES principle_sets(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  funding TEXT NOT NULL DEFAULT '',
+  period TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_principles_set ON principles(set_id, id);
+
 -- 지침·FAQ 원문. 조항 단위로 쪼개 guideline_chunks 에 저장
 CREATE TABLE IF NOT EXISTS guideline_docs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -289,6 +312,13 @@ function migrate(db: DB) {
   if (!has('inquiries', 'user_unread')) db.exec('ALTER TABLE inquiries ADD COLUMN user_unread INTEGER NOT NULL DEFAULT 0');
   // 문의 답변으로 만든 표준답안 통합번호 (같은 문의를 두 번 등록하지 않게 표시)
   if (!has('inquiries', 'qa_id')) db.exec('ALTER TABLE inquiries ADD COLUMN qa_id TEXT');
+  // 로그인 잠금은 잠시 막았다가 저절로 풀리는 방식으로 (관리자 해제 화면 없앰). 예전 영구 잠금은 풀어 준다
+  if (!has('users', 'locked_until')) {
+    db.exec('ALTER TABLE users ADD COLUMN locked_until TEXT');
+    db.exec('UPDATE users SET locked = 0, failed_attempts = 0');
+  }
+  // 답변범위 외 목록 기능을 없앴다: 예전에 올린 목록이 답변에 계속 영향을 주지 않게 비운다
+  db.exec('DELETE FROM out_of_scope');
   // 검수자 역할을 없애고 그 권한을 관리자에게 합쳤다 (기존 검수자 계정은 관리자로)
   db.exec(`UPDATE users SET role = 'admin' WHERE role = 'reviewer'`);
   // 연결 대상 연락처 기능을 없앴다 (답변에는 '○○에 문의하시기 바랍니다'만 안내)

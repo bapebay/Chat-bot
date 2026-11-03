@@ -1,4 +1,5 @@
 // 데모 모드: 실제 서버 대신 브라우저 안의 가짜 서버(server.ts)로 요청을 보낸다.
+import { principlesTemplateCsv } from '../../../server/knowledge/principles';
 import { exportState, handle, importState, onResetStorage, onStateChange, setAi, setStorageStatus } from './server';
 
 /** claude.ai 화면 안에서 열렸으면 실제 AI(sample 기능)를 가져온다. 아니면 null */
@@ -44,7 +45,15 @@ export async function installDemo(): Promise<void> {
       const a = (e.target as HTMLElement).closest?.('a[href^="/api/"]');
       if (a) {
         e.preventDefault();
-        toast('데모 페이지에서는 엑셀 받기를 지원하지 않습니다. 실제 서비스에서는 이 버튼으로 엑셀 파일을 받습니다.');
+        // 집행원리 CSV 양식은 브라우저 안에서 만들어 바로 내려받게 한다
+        if (a.getAttribute('href') === '/api/admin/knowledge/principles/template') {
+          const url = URL.createObjectURL(new Blob([principlesTemplateCsv()], { type: 'text/csv;charset=utf-8' }));
+          const link = Object.assign(document.createElement('a'), { href: url, download: '집행원리_양식.csv' });
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          return;
+        }
+        toast('데모 페이지에서는 파일 내려받기를 지원하지 않습니다. 실제 서비스에서는 이 버튼으로 파일을 받습니다.');
       }
     },
     true,

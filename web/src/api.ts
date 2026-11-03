@@ -71,8 +71,6 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
-  /** 답변할 때 쓰던 표준답안 차수 */
-  basis?: { qa_version: string; applied_at: string | null } | null;
   /** 보안 의심으로 막은 경우 그 종류 */
   security?: string;
   retrieved?: {
@@ -122,6 +120,9 @@ export interface SettingRevision {
   created_at: string;
   changed_by: string | null;
 }
+
+/** 새 대화의 기본 사업 유형 (모든 사용자 공통, 서버 constants.ts 와 같게) */
+export const DEFAULT_BUSINESS_TYPE = '순수앵커';
 
 export const ROLE_LABELS: Record<Role, string> = { user: '사용자', admin: '관리자' };
 

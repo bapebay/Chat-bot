@@ -141,66 +141,6 @@ export async function parseQaWorkbook(buffer: Buffer): Promise<{ items: ParsedQa
   return { items, warnings, sheetName: sheet.name };
 }
 
-export interface ParsedOutOfScope {
-  question: string;
-  guidance: string;
-  department: string;
-}
-
-/** 답변범위 외 목록 (엑셀: 대표 질의 / 안내 문구 / 담당 부서, 또는 텍스트: 한 줄에 질의 하나) */
-export async function parseOutOfScope(buffer: Buffer, filename: string): Promise<ParsedOutOfScope[]> {
-  if (/\.(txt|md|csv)$/i.test(filename)) {
-    return buffer
-      .toString('utf8')
-      .split(/\r?\n/)
-      .map((l) => l.replace(/^[-*\d.)\s]+/, '').trim())
-      .filter(Boolean)
-      .map((question) => ({ question, guidance: '', department: '' }));
-  }
-  const wb = await loadWorkbook(buffer);
-  for (const sheet of wb.worksheets) {
-    const found = findColumns(
-      sheet,
-      {
-        question: ['대표질의', '대표질문', '질의', '질문'],
-        guidance: ['안내문구', '안내', '답변'],
-        department: ['담당부서', '부서', '담당'],
-      },
-      ['question'],
-    );
-    if (!found) continue;
-    const out: ParsedOutOfScope[] = [];
-    for (let r = found.headerRow + 1; r <= sheet.rowCount; r++) {
-      const row = sheet.getRow(r);
-      const get = (c?: number) => (c ? cellText(row.getCell(c)) : '');
-      const question = get(found.cols.question);
-      if (question) out.push({ question, guidance: get(found.cols.guidance), department: get(found.cols.department) });
-    }
-    if (out.length) return out;
-  }
-  throw new Error('‘대표 질의’ 머리글이 있는 시트를 찾지 못했습니다.');
-}
-
-/** 답변 원칙 (엑셀: ‘원칙’ 또는 ‘내용’ 열, 텍스트: 그대로). 한 줄에 한 항목으로 돌려준다 */
-export async function parsePrinciples(buffer: Buffer, filename: string): Promise<string> {
-  if (/\.(txt|md)$/i.test(filename)) return buffer.toString('utf8').trim();
-  const wb = await loadWorkbook(buffer);
-  for (const sheet of wb.worksheets) {
-    const found = findColumns(sheet, { content: ['원칙', '내용', '답변원칙'], no: ['번호', '원칙번호', 'no'] }, ['content']);
-    if (!found) continue;
-    const lines: string[] = [];
-    for (let r = found.headerRow + 1; r <= sheet.rowCount; r++) {
-      const row = sheet.getRow(r);
-      const content = cellText(row.getCell(found.cols.content!)).replace(/\n+/g, ' ');
-      if (!content) continue;
-      const no = found.cols.no ? cellText(row.getCell(found.cols.no)) : '';
-      lines.push(no ? `${no}. ${content}` : `- ${content}`);
-    }
-    if (lines.length) return lines.join('\n');
-  }
-  throw new Error('‘원칙’ 또는 ‘내용’ 머리글이 있는 시트를 찾지 못했습니다.');
-}
-
 /** 표준 Q&A를 업로드 양식과 같은 형식의 엑셀로 내보낸다 */
 export async function buildQaWorkbook(items: Omit<ParsedQaItem, 'row'>[]): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();

@@ -99,7 +99,7 @@ function userFromRequest(db: DB, req: FastifyRequest): UserRow | null {
        WHERE s.token = ? AND s.expires_at > datetime('now')`,
     )
     .get(token) as UserRow | undefined;
-  if (!row || row.status !== 'approved' || row.locked) return null;
+  if (!row || row.status !== 'approved') return null;
   return row;
 }
 

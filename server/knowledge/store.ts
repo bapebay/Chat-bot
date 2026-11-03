@@ -1,6 +1,7 @@
 import type { DB } from '../db.js';
 import { TEMPORARY_FAQ, TEMPORARY_GUIDELINE } from '../defaults.js';
-import type { ParsedOutOfScope, ParsedQaItem, UploadWarning } from './excel.js';
+import type { ParsedQaItem, UploadWarning } from './excel.js';
+import type { ParsedPrinciple } from './principles.js';
 import { chunkDocument, type Chunk } from './guideline.js';
 import { isConfirmed } from './index.js';
 
@@ -87,14 +88,6 @@ export function listQaItems(db: DB, versionId: number, q: string, limit = 200) {
     .all(versionId, q, like, like, like, like, limit);
 }
 
-export function replaceOutOfScope(db: DB, items: ParsedOutOfScope[]): void {
-  db.transaction(() => {
-    db.prepare('DELETE FROM out_of_scope').run();
-    const ins = db.prepare('INSERT INTO out_of_scope (question, guidance, department) VALUES (?, ?, ?)');
-    for (const it of items) ins.run(it.question, it.guidance, it.department);
-  })();
-}
-
 export function addGuidelineDoc(db: DB, doc: { name: string; kind: string; filename: string; userId: number | null }, chunks: Chunk[]): number {
   return db.transaction(() => {
     const info = db
@@ -133,4 +126,72 @@ export function seedTemporaryKnowledge(db: DB): boolean {
     chunkDocument([TEMPORARY_FAQ], false),
   );
   return true;
+}
+
+// ================= 집행원리 =================
+
+export interface PrincipleSetRow {
+  id: number;
+  filename: string;
+  uploaded_by_name: string | null;
+  status: 'active' | 'archived';
+  item_count: number;
+  warnings: string[];
+  created_at: string;
+  activated_at: string | null;
+}
+
+/** CSV 한 묶음을 저장하고 바로 사용 중으로 바꾼다 (이전 묶음은 보관) */
+export function savePrincipleSet(db: DB, filename: string, userId: number | null, items: ParsedPrinciple[], warnings: string[]): number {
+  return db.transaction(() => {
+    const id = Number(
+      db
+        .prepare(`INSERT INTO principle_sets (filename, uploaded_by, item_count, warnings) VALUES (?, ?, ?, ?)`)
+        .run(filename, userId, items.length, JSON.stringify(warnings)).lastInsertRowid,
+    );
+    const ins = db.prepare('INSERT INTO principles (set_id, code, category, funding, period, text, note) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    for (const p of items) ins.run(id, p.code, p.category, p.funding, p.period, p.text, p.note);
+    activatePrincipleSet(db, id);
+    return id;
+  })();
+}
+
+export function activatePrincipleSet(db: DB, setId: number): boolean {
+  return db.transaction(() => {
+    if (!db.prepare('SELECT 1 FROM principle_sets WHERE id = ?').get(setId)) return false;
+    db.prepare(`UPDATE principle_sets SET status = 'archived' WHERE status = 'active'`).run();
+    db.prepare(`UPDATE principle_sets SET status = 'active', activated_at = datetime('now') WHERE id = ?`).run(setId);
+    return true;
+  })();
+}
+
+export function listPrincipleSets(db: DB): PrincipleSetRow[] {
+  return (
+    db
+      .prepare(
+        `SELECT s.*, u.username AS uploaded_by_name FROM principle_sets s
+         LEFT JOIN users u ON u.id = s.uploaded_by ORDER BY s.id DESC`,
+      )
+      .all() as (Omit<PrincipleSetRow, 'warnings'> & { warnings: string })[]
+  ).map((r) => ({ ...r, warnings: JSON.parse(r.warnings) as string[] }));
+}
+
+/** 사용 중인 묶음은 지울 수 없다 */
+export function deletePrincipleSet(db: DB, setId: number): 'ok' | 'active' | 'missing' {
+  const row = db.prepare('SELECT status FROM principle_sets WHERE id = ?').get(setId) as { status: string } | undefined;
+  if (!row) return 'missing';
+  if (row.status === 'active') return 'active';
+  db.prepare('DELETE FROM principle_sets WHERE id = ?').run(setId);
+  return 'ok';
+}
+
+export function listPrinciples(db: DB, setId: number, q: string, limit = 300) {
+  const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  return db
+    .prepare(
+      `SELECT * FROM principles WHERE set_id = ?
+         AND (? = '' OR code LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')
+       ORDER BY id LIMIT ?`,
+    )
+    .all(setId, q, like, like, like, limit);
 }

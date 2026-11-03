@@ -112,8 +112,8 @@ test('표준답안 편집기: 수정·추가·삭제가 바로 검색에 반영�
   assert.equal(kb.stats.qa, 3);
   const dup = await app.inject({ method: 'POST', url: '/api/review/qa', headers: { cookie: rev }, payload: { qa_id: 'E1-01-a', question: 'x', answer: 'y' } });
   assert.equal(dup.statusCode, 409);
-  const s = (await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie: admin }, payload: { query: '회의비 다과 구입' } })).json();
-  assert.equal(s.qa[0].qa_id, 'E1-01-a');
+  const s = await kb.search('회의비 다과 구입', '모름');
+  assert.equal(s.qa[0].doc.qa_id, 'E1-01-a');
 
   await app.inject({ method: 'DELETE', url: `/api/review/qa/${add.json().id}`, headers: { cookie: rev }, payload: { reason: '중복' } });
   assert.equal(kb.stats.qa, 2);
@@ -157,8 +157,8 @@ test('사용량·비용 통계와 자주 묻는 질문', async () => {
   assert.equal(answers.length, 1);
   assert.equal(answers[0].question, '사업비 이월 가능한가요?');
 
-  const sug = (await app.inject({ url: '/api/suggestions', headers: { cookie: user } })).json();
-  assert.deepEqual(sug.map((x: { category: string }) => x.category), ['이월', '장비']);
+  // 추천 질문 기능은 없앴다 (점검표 결정)
+  assert.equal((await app.inject({ url: '/api/suggestions', headers: { cookie: user } })).statusCode, 404);
 });
 
 test('보관 기간이 지난 대화 자동 삭제', async () => {

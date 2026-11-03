@@ -157,7 +157,7 @@ function SignupForm({ meta, onDone }: { meta: Meta; onDone: (msg: string) => voi
 /** 데모 페이지: 역할별로 바로 로그인 */
 function DemoLogin({ onLogin }: { onLogin: (u: User) => void }) {
   const roles = [
-    { username: 'user', label: '사용자', desc: '대학 담당자로 질문하기 (사업 유형: 모름)' },
+    { username: 'user', label: '사용자', desc: '대학 담당자로 질문하기 (사업 유형: 순수앵커)' },
     { username: 'admin', label: '관리자', desc: '문의 답변·검수·데이터·평가·통계' },
   ];
   return (

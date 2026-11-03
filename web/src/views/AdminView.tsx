@@ -14,11 +14,10 @@ import {
 } from '../api';
 import { MessageList } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
-import { EvalTab } from './EvalTab';
 import { FilePicker, KnowledgeTab } from './KnowledgeTab';
 import { AnswersBrowser, AuditTab, NoticeTab, StatsTab } from './OpsTabs';
 
-type Tab = 'stats' | 'users' | 'knowledge' | 'eval' | 'conversations' | 'answers' | 'prompt' | 'notices' | 'audit' | 'system';
+type Tab = 'stats' | 'users' | 'knowledge' | 'conversations' | 'answers' | 'prompt' | 'notices' | 'audit' | 'system';
 
 export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; onUsersChanged: () => void }) {
   const [tab, setTab] = useState<Tab>('stats');
@@ -27,7 +26,6 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
     { key: 'stats', label: '사용량·비용', icon: BarChart3 },
     { key: 'users', label: '사용자·권한', icon: Users },
     { key: 'knowledge', label: '지식 데이터', icon: Database },
-    { key: 'eval', label: '평가', icon: ClipboardCheck },
     { key: 'conversations', label: '대화 열람', icon: Eye },
     { key: 'answers', label: '답변 모아보기', icon: ClipboardCheck },
     { key: 'prompt', label: '프롬프트·면책 문구', icon: FileSignature },
@@ -62,8 +60,7 @@ export function AdminView({ me, meta, onUsersChanged }: { me: User; meta: Meta; 
             }}
           />
         )}
-        {tab === 'knowledge' && <KnowledgeTab meta={meta} />}
-        {tab === 'eval' && <EvalTab />}
+        {tab === 'knowledge' && <KnowledgeTab />}
         {tab === 'stats' && <StatsTab />}
         {tab === 'answers' && <AnswersBrowser />}
         {tab === 'notices' && <NoticeTab />}
@@ -200,11 +197,6 @@ function UsersTab({
                 <tr key={u.id} className="text-slate-700 dark:text-slate-200">
                   <td className="px-3 py-2 font-semibold">
                     {u.username}
-                    {u.locked && (
-                      <span className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-950 dark:text-red-300">
-                        <Lock className="h-3 w-3" /> 잠김
-                      </span>
-                    )}
                     {u.must_change_password && <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-300">비번 변경 필요</span>}
                   </td>
                   <td className="px-3 py-2">
@@ -229,11 +221,6 @@ function UsersTab({
                   <td className="px-3 py-2 text-xs text-slate-500">{formatTime(u.last_login_at)}</td>
                   <td className="whitespace-nowrap px-3 py-2 text-right">
                     <div className="inline-flex gap-1">
-                      {u.locked && (
-                        <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => run(() => api(`/api/admin/users/${u.id}/unlock`, { body: {} }), `'${u.username}' 잠금을 해제했습니다.`)}>
-                          잠금 해제
-                        </button>
-                      )}
                       <button type="button" className="btn-secondary px-2 py-1 text-xs" title="대화 열람" onClick={() => onViewConversations(u)}>
                         <Eye className="h-3.5 w-3.5" />
                       </button>
@@ -636,68 +623,10 @@ export function SettingEditor({
 
 // ================= 시스템 정보 =================
 
-type BackupInfo = { interval_hours: number; keep: number; count: number; latest: { name: string; size: number; created_at: string } | null };
-
-/** DB 백업 현황과 외부 공개용 보안 설정 상태 */
-function BackupSecurity({ backup, security }: { backup: BackupInfo; security: { rate_limit: boolean; staff_ip_limited: boolean; https_cookie: boolean } }) {
-  const [latest, setLatest] = useState(backup.latest);
-  const [count, setCount] = useState(backup.count);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const onOff = (on: boolean, yes: string, no: string) => (
-    <span className={on ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>{on ? yes : no}</span>
-  );
-  return (
-    <section className="card p-4">
-      <h3 className="mb-3 font-bold text-slate-800 dark:text-slate-100">백업·보안</h3>
-      <dl className="grid grid-cols-2 gap-2 text-sm text-slate-700 sm:grid-cols-3 dark:text-slate-200">
-        <dt className="text-slate-500">자동 백업</dt>
-        <dd className="sm:col-span-2">{backup.interval_hours ? `${backup.interval_hours}시간마다, 최근 ${backup.keep}개 보관` : onOff(false, '', '꺼짐 (BACKUP_INTERVAL_HOURS=0)')}</dd>
-        <dt className="text-slate-500">마지막 백업</dt>
-        <dd className="sm:col-span-2">
-          {latest ? `${new Date(latest.created_at).toLocaleString('ko-KR')} · ${(latest.size / 1024 / 1024).toFixed(1)}MB · 보관 ${count}개` : '아직 없음'}
-        </dd>
-        <dt className="text-slate-500">요청 횟수 제한</dt>
-        <dd className="sm:col-span-2">{onOff(security.rate_limit, '켜짐', '꺼짐 (외부 공개 시 켜야 합니다)')}</dd>
-        <dt className="text-slate-500">관리 메뉴 접근</dt>
-        <dd className="sm:col-span-2">{onOff(security.staff_ip_limited, '허용한 IP에서만', '어디서나 (ADMIN_ALLOWED_IPS 로 제한 가능)')}</dd>
-        <dt className="text-slate-500">HTTPS 전용 쿠키</dt>
-        <dd className="sm:col-span-2">{onOff(security.https_cookie, '켜짐', '꺼짐 (HTTPS 적용 후 COOKIE_SECURE=true)')}</dd>
-      </dl>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setMsg('');
-            try {
-              const r = await api<{ latest: BackupInfo['latest'] }>('/api/admin/backup', { body: {} });
-              setLatest(r.latest);
-              setCount((c) => Math.min(c + 1, backup.keep));
-              setMsg('백업을 만들었습니다.');
-            } catch (e) {
-              setMsg(e instanceof Error ? e.message : '백업하지 못했습니다.');
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? '백업 중…' : '지금 백업'}
-        </button>
-        <span className="text-xs text-slate-500 dark:text-slate-400">{msg || '서버 이전·업데이트 전에 한 번 눌러 두세요. 백업 파일은 서버의 백업 폴더에 저장됩니다.'}</span>
-      </div>
-    </section>
-  );
-}
-
 function SystemTab() {
   const [info, setInfo] = useState<{
     llm: { provider: string; model: string; history_messages: number; demo_tiers?: Record<string, string>; demo_tier?: string };
     counts: Record<string, number>;
-    backup?: BackupInfo;
-    security?: { rate_limit: boolean; staff_ip_limited: boolean; https_cookie: boolean };
   } | null>(null);
 
   useEffect(() => {
@@ -748,7 +677,6 @@ function SystemTab() {
         )}
       </section>
       {info.llm.demo_tiers !== undefined || info.llm.provider === 'demo' ? <DemoStorage /> : null}
-      {info.backup && info.security && <BackupSecurity backup={info.backup} security={info.security} />}
       <LimitSettings />
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {Object.entries(info.counts).map(([k, v]) => (

@@ -12,7 +12,7 @@ import {
   verifyPassword,
   type UserRow,
 } from '../auth.js';
-import { BUSINESS_TYPES, MAX_LOGIN_FAILURES, ORG_TYPES, REGIONS } from '../constants.js';
+import { BUSINESS_TYPES, LOGIN_LOCK_MINUTES, MAX_LOGIN_FAILURES, ORG_TYPES, REGIONS } from '../constants.js';
 import type { DB } from '../db.js';
 import { str } from './util.js';
 
@@ -57,16 +57,18 @@ export function authRoutes(app: FastifyInstance, db: DB) {
     const invalid = '아이디 또는 비밀번호가 일치하지 않습니다.';
 
     if (!user) return reply.code(401).send({ error: invalid });
-    if (user.locked) {
-      return reply.code(403).send({ error: `로그인 ${MAX_LOGIN_FAILURES}회 실패로 계정이 잠겼습니다. 관리자에게 문의하세요.` });
+    // 연속으로 틀리면 잠시 막는다 (무차별 대입 방지). 시간이 지나면 저절로 풀린다
+    const lockedNow = db.prepare(`SELECT 1 FROM users WHERE id = ? AND locked_until > datetime('now')`).get(user.id);
+    if (lockedNow) {
+      return reply.code(403).send({ error: `로그인을 여러 번 틀려 잠시 막혀 있습니다. ${LOGIN_LOCK_MINUTES}분 뒤 다시 시도하세요.` });
     }
     if (!verifyPassword(password, user.password_hash)) {
       const failures = user.failed_attempts + 1;
-      const lock = failures >= MAX_LOGIN_FAILURES ? 1 : 0;
-      db.prepare('UPDATE users SET failed_attempts = ?, locked = ? WHERE id = ?').run(failures, lock, user.id);
-      if (lock) {
-        return reply.code(403).send({ error: `비밀번호를 ${MAX_LOGIN_FAILURES}회 틀려 계정이 잠겼습니다. 관리자에게 문의하세요.` });
+      if (failures >= MAX_LOGIN_FAILURES) {
+        db.prepare(`UPDATE users SET failed_attempts = 0, locked_until = datetime('now', ?) WHERE id = ?`).run(`+${LOGIN_LOCK_MINUTES} minutes`, user.id);
+        return reply.code(403).send({ error: `비밀번호를 ${MAX_LOGIN_FAILURES}회 틀려 ${LOGIN_LOCK_MINUTES}분 동안 로그인할 수 없습니다.` });
       }
+      db.prepare('UPDATE users SET failed_attempts = ? WHERE id = ?').run(failures, user.id);
       return reply.code(401).send({ error: `${invalid} (실패 ${failures}/${MAX_LOGIN_FAILURES})` });
     }
     if (user.status !== 'approved') {

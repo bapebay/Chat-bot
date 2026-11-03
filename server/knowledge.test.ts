@@ -5,7 +5,7 @@ import { buildApp } from './app.js';
 import { hashPassword } from './auth.js';
 import { openDatabase } from './db.js';
 import type { Embedder } from './knowledge/embedder.js';
-import { chunkDocument } from './knowledge/guideline.js';
+import { chunkDocument, chunkMarkdown, chunkTextFile } from './knowledge/guideline.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { findPii, maskPii } from './knowledge/text.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
@@ -120,7 +120,7 @@ test('지침 원문을 조항 단위로 나누고 쪽수를 기록', () => {
 });
 
 test('표준 Q&A 업로드 → 미리보기(경고) → 적용 → 검색형 답변과 근거 카드', async () => {
-  const { app, cookie, calls, db } = await setup();
+  const { app, cookie, calls, db, kb } = await setup();
   const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', ...(await qaUpload(cookie, 'qa.xlsx')) });
   assert.equal(up.statusCode, 200, up.body);
   const v = up.json();
@@ -148,11 +148,12 @@ test('표준 Q&A 업로드 → 미리보기(경고) → 적용 → 검색형 답
   assert.equal(m.citations.retrieved.qa[0].qa_id, 'B4-01-a');
 
   // 미검수 답안은 기본적으로 검색에서 빠지고, 설정을 켜면 들어온다
-  const before = await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie }, payload: { query: '실험장비 구입 사전 승인' } });
-  assert.ok(!before.json().qa.some((q: { qa_id: string }) => q.qa_id === 'D1-01-a'));
+  const before = await kb.search('실험장비 구입 사전 승인', '모름');
+  assert.ok(!before.qa.some((h) => h.doc.qa_id === 'D1-01-a'));
   await app.inject({ method: 'PUT', url: '/api/admin/settings/include_unreviewed', headers: { cookie }, payload: { value: 'true' } });
-  const after = await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie }, payload: { query: '실험장비 구입 사전 승인' } });
-  assert.equal(after.json().qa[0].qa_id, 'D1-01-a');
+  kb.rebuild();
+  const after = await kb.search('실험장비 구입 사전 승인', '모름');
+  assert.equal(after.qa[0].doc.qa_id, 'D1-01-a');
 
   // 엑셀 내보내기
   const ex = await app.inject({ url: `/api/admin/knowledge/qa/versions/${v.id}/export`, headers: { cookie } });
@@ -170,17 +171,13 @@ test('표준 Q&A 업로드 → 미리보기(경고) → 적용 → 검색형 답
   assert.deepEqual(statuses, [{ id: v.id, status: 'active' }, { id: up2.json().id, status: 'archived' }]);
 });
 
-test('근거 없는 질문은 모델을 부르지 않고 근거없음, 범위 외 질문은 답변범위외', async () => {
+test('근거 없는 질문은 모델을 부르지 않고 근거없음', async () => {
   const { app, cookie, calls } = await setup();
   const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', ...(await qaUpload(cookie, 'qa.xlsx')) });
   await app.inject({ method: 'POST', url: `/api/admin/knowledge/qa/versions/${up.json().id}/activate`, headers: { cookie } });
-  const oos = multipart('oos.txt', Buffer.from('자체평가 실적 인정 기준\n성과지표 달성 실적 인정 여부\n'));
-  assert.equal((await app.inject({ method: 'POST', url: '/api/admin/knowledge/out-of-scope/upload', headers: { cookie, ...oos.headers }, payload: oos.payload })).statusCode, 200);
 
   const none = await ask(app, cookie, '오늘 점심 메뉴 추천해 주세요');
   assert.equal(none.answer_type, '근거없음');
-  const outside = await ask(app, cookie, '성과지표 실적 인정 여부를 알려주세요');
-  assert.equal(outside.answer_type, '답변범위외');
   assert.equal(calls.length, 0);
 });
 
@@ -209,16 +206,56 @@ test('의미 검색 모델이 있으면 혼합 검색으로 동작', async () =>
       });
     },
   };
-  const { app, cookie, db } = await setup(fake);
+  const { app, cookie, db, kb } = await setup(fake);
   const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', ...(await qaUpload(cookie, 'qa.xlsx')) });
   await app.inject({ method: 'POST', url: `/api/admin/knowledge/qa/versions/${up.json().id}/activate`, headers: { cookie } });
   // 색인 계산이 끝날 때까지 대기
   for (let i = 0; i < 50 && !(await app.inject({ url: '/api/admin/knowledge/status', headers: { cookie } })).json().semantic_ready; i++) {
     await new Promise((r) => setTimeout(r, 20));
   }
-  const r = (await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie }, payload: { query: '사업비 이월 가능?' } })).json();
+  const r = await kb.search('사업비 이월 가능?', '모름');
   assert.equal(r.mode, 'hybrid');
-  assert.equal(r.qa[0].qa_id, 'C2-03-a');
+  assert.equal(r.qa[0].doc.qa_id, 'C2-03-a');
   assert.equal(typeof r.qa[0].semantic, 'number');
   assert.ok((db.prepare('SELECT COUNT(*) AS n FROM embeddings').get() as { n: number }).n > 0);
+});
+
+test('마크다운 지침: # 제목·조문 머리로 나누고, 표·꾸밈 기호를 걷어 내며, 쪽 표시와 CP949도 읽는다', () => {
+  const md = [
+    '---',
+    'title: 사업비 지침',
+    '---',
+    '# 제1장 총칙',
+    '<!-- page 3 -->',
+    '## 제5조(인건비) 인건비는 **상한 이내**로 편성한다.',
+    '1. 과제책임자 수당은 [별표 1](http://x)에 따른다.',
+    '2. 참여율은 *100%* 를 넘을 수 없다 &#91;별표&#93; &amp; 부칙.',
+    '',
+    '| 구분 | 한도 |',
+    '| --- | ---: |',
+    '| 1. 보직수당 | 월 50만원 |',
+    '<!-- page 4 -->',
+    '### 회의비 집행 기준',
+    '> 회의비는 `1인당` 기준 단가 안에서 집행한다.',
+    '- Q1. 주류 구입 가능? A. 불가',
+  ].join('\n');
+  const chunks = chunkTextFile(Buffer.from(md, 'utf8'), '지침.md');
+  assert.deepEqual(chunks.map((c) => [c.clause, c.page]), [
+    ['제1장', null],
+    ['제5조(인건비)', 3],
+    ['회의비 집행 기준', 4],
+    ['Q1. 주류 구입 가능? A. 불가', 4],
+  ]);
+  const art = chunks[1].text;
+  assert.match(art, /상한 이내로 편성한다/);
+  assert.match(art, /1\. 과제책임자 수당은 별표 1에 따른다/);
+  assert.match(art, /참여율은 100% 를 넘을 수 없다 \[별표\] & 부칙/);
+  assert.match(art, /구분 · 한도\n1\. 보직수당 · 월 50만원/);
+  assert.doesNotMatch(chunks.map((c) => c.text).join('\n'), /\*\*|\]\(|\| ---|<!--|title:|`/);
+  assert.match(chunks[2].text, /^회의비 집행 기준\n회의비는 1인당/);
+  // 제목(#)이 없는 MD는 일반 글처럼 '1.' 등으로도 나눈다
+  assert.equal(chunkMarkdown('1. 적용 범위\n본문\n2. 정의\n본문').length, 2);
+  // 한글 윈도 기본 저장(CP949) TXT도 읽는다
+  const cp949 = Buffer.from([0xc1, 0xa6, 0x31, 0xc1, 0xb6, 0x28, 0xb8, 0xf1, 0xc0, 0xfb, 0x29]); // 제1조(목적)
+  assert.equal(chunkTextFile(cp949, 'a.txt')[0].clause, '제1조(목적)');
 });

@@ -2,9 +2,8 @@ import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
-import { BUSINESS_TYPES } from '../constants.js';
 import type { DB } from '../db.js';
-import { buildQaWorkbook, parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../knowledge/excel.js';
+import { buildQaWorkbook, parseQaWorkbook } from '../knowledge/excel.js';
 import { chunkUpload } from '../knowledge/guideline.js';
 import type { KnowledgeBase } from '../knowledge/index.js';
 import {
@@ -15,8 +14,13 @@ import {
   listGuidelineDocs,
   listQaItems,
   listQaVersions,
-  replaceOutOfScope,
+  activatePrincipleSet,
+  deletePrincipleSet,
+  listPrinciples,
+  listPrincipleSets,
+  savePrincipleSet,
 } from '../knowledge/store.js';
+import { parsePrinciplesCsv, principlesTemplateCsv } from '../knowledge/principles.js';
 import { idParam, str } from './util.js';
 
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -135,40 +139,12 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   });
 
   // ----- 답변 원칙: 파일에서 글을 읽어 편집기에 채워 준다 (저장은 설정 화면에서) -----
-  app.post('/api/admin/knowledge/principles/parse', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.(xlsx|txt|md)$/i);
-    if (!up) return;
-    try {
-      return { text: await parsePrinciples(up.buffer, up.filename) };
-    } catch (e) {
-      return fail(reply, e);
-    }
-  });
-
   // ----- 답변범위 외 목록 -----
-  app.get('/api/admin/knowledge/out-of-scope', { preHandler: admin }, async () =>
-    db.prepare('SELECT * FROM out_of_scope ORDER BY id').all(),
-  );
-
-  app.post('/api/admin/knowledge/out-of-scope/upload', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.(xlsx|txt|md|csv)$/i);
-    if (!up) return;
-    try {
-      const items = await parseOutOfScope(up.buffer, up.filename);
-      replaceOutOfScope(db, items);
-      audit(db, req.user, '답변범위 외 목록 교체', up.filename, `${items.length}건`);
-      kb.rebuild();
-      return { ok: true, count: items.length };
-    } catch (e) {
-      return fail(reply, e);
-    }
-  });
-
   // ----- 지침·FAQ 원문 -----
   app.get('/api/admin/knowledge/guidelines', { preHandler: admin }, async () => listGuidelineDocs(db));
 
   app.post('/api/admin/knowledge/guidelines/upload', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.(pdf|txt|md)$/i);
+    const up = await readUpload(req, reply, /\.(pdf|txt|md|markdown)$/i);
     if (!up) return;
     const kind = up.fields.kind === 'FAQ' ? 'FAQ' : '지침';
     const name = (up.fields.name || up.filename.replace(/\.[^.]+$/, '')).trim().slice(0, 100);
@@ -207,25 +183,51 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     return { ok: true };
   });
 
-  // ----- 검색 시험: 질문을 넣으면 어떤 근거가 몇 점으로 찾아지는지 보여준다 -----
-  app.post('/api/admin/knowledge/search-test', { preHandler: admin }, async (req, reply) => {
-    const b = (req.body ?? {}) as Record<string, unknown>;
-    const query = str(b.query);
-    const businessType = str(b.business_type) || '모름';
-    if (!query) return reply.code(400).send({ error: '질문을 입력해 주세요.' });
-    if (!(BUSINESS_TYPES as readonly string[]).includes(businessType)) return reply.code(400).send({ error: '사업 유형이 올바르지 않습니다.' });
-    const r = await kb.search(query, businessType);
-    const fmt = <T>(h: { doc: T; keyword: number; semantic: number | null; relevant: boolean }) => ({
-      keyword: Math.round(h.keyword * 1000) / 1000,
-      semantic: h.semantic === null ? null : Math.round(h.semantic * 1000) / 1000,
-      relevant: h.relevant,
-    });
-    return {
-      mode: r.mode,
-      passed: r.passed,
-      qa: r.qa.map((h) => ({ ...fmt(h), qa_id: h.doc.qa_id, category1: h.doc.category1, question: h.doc.question })),
-      guideline: r.guideline.map((h) => ({ ...fmt(h), doc_name: h.doc.doc_name, clause: h.doc.clause, page: h.doc.page })),
-      out_of_scope: r.outOfScope ? { ...fmt(r.outOfScope), question: r.outOfScope.doc.question } : null,
-    };
+
+  // ----- 집행원리 (근거 2단계: 지침·FAQ 다음, 표준답안 앞) -----
+  app.get('/api/admin/knowledge/principles/template', { preHandler: admin }, async (_req, reply) =>
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('집행원리_양식.csv')}`)
+      .send(principlesTemplateCsv()),
+  );
+
+  app.get('/api/admin/knowledge/principles', { preHandler: admin }, async () => listPrincipleSets(db));
+
+  app.get('/api/admin/knowledge/principles/sets/:id/items', { preHandler: admin }, async (req) => {
+    const id = idParam((req.params as { id: string }).id) ?? 0;
+    return listPrinciples(db, id, str((req.query as Record<string, unknown>).q));
+  });
+
+  app.post('/api/admin/knowledge/principles/upload', { preHandler: admin }, async (req, reply) => {
+    const up = await readUpload(req, reply, /\.csv$/i);
+    if (!up) return reply;
+    let parsed: ReturnType<typeof parsePrinciplesCsv>;
+    try {
+      parsed = parsePrinciplesCsv(up.buffer);
+    } catch (e) {
+      return fail(reply, e);
+    }
+    const id = savePrincipleSet(db, up.filename, req.user.id, parsed.items, parsed.warnings);
+    kb.rebuild();
+    audit(db, req.user, '집행원리 업로드', up.filename, `${parsed.items.length}건`);
+    return { id, item_count: parsed.items.length, warnings: parsed.warnings };
+  });
+
+  app.post('/api/admin/knowledge/principles/sets/:id/activate', { preHandler: admin }, async (req, reply) => {
+    const id = idParam((req.params as { id: string }).id) ?? 0;
+    if (!activatePrincipleSet(db, id)) return reply.code(404).send({ error: '집행원리 묶음을 찾을 수 없습니다.' });
+    kb.rebuild();
+    audit(db, req.user, '집행원리 되돌리기', `#${id}`);
+    return { ok: true };
+  });
+
+  app.delete('/api/admin/knowledge/principles/sets/:id', { preHandler: admin }, async (req, reply) => {
+    const id = idParam((req.params as { id: string }).id) ?? 0;
+    const r = deletePrincipleSet(db, id);
+    if (r === 'missing') return reply.code(404).send({ error: '집행원리 묶음을 찾을 수 없습니다.' });
+    if (r === 'active') return reply.code(400).send({ error: '사용 중인 묶음은 지울 수 없습니다. 다른 묶음을 먼저 사용하세요.' });
+    audit(db, req.user, '집행원리 묶음 삭제', `#${id}`);
+    return { ok: true };
   });
 }
