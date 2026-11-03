@@ -10,6 +10,8 @@ import {
   type UserRow,
 } from '../auth.js';
 import { listMessages } from '../chat.js';
+import { OUTPUT_INSTRUCTIONS, SECURITY_RULES } from '../defaults.js';
+import { guardCheck } from '../knowledge/guard.js';
 import { config } from '../config.js';
 import { ROLES, type Role } from '../constants.js';
 import type { DB } from '../db.js';
@@ -186,6 +188,34 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     audit(db, req.user, '설정 되돌리기', key, `이력 #${revId}`);
     onKnowledgeChanged(key);
     return { value: rev.value, revisions: listRevisions(db, key) };
+  });
+
+  // ----- 보안 차단 점검: 표준답안 전체로 잘못된 차단이 생기는지 AI 호출 없이 미리 본다 -----
+  app.post('/api/admin/prompt/guard-check', { preHandler: admin }, async (req) => {
+    const draft = str(((req.body ?? {}) as Record<string, unknown>).system_prompt);
+    const prompt = draft || getSetting(db, 'system_prompt');
+    const items = db
+      .prepare(`SELECT i.qa_id, i.question, i.answer FROM qa_items i JOIN qa_versions v ON v.id = i.version_id WHERE v.status = 'active' ORDER BY i.id`)
+      .all() as { qa_id: string; question: string; answer: string }[];
+    const check = guardCheck(items, [SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n'), prompt);
+    // 실제로 막힌 답변 (최근 30일, 사유별)
+    const recent = db
+      .prepare(
+        `SELECT json_extract(citations, '$.security') AS reason, COUNT(*) AS n FROM messages
+         WHERE role = 'assistant' AND json_valid(citations) AND json_extract(citations, '$.security') IS NOT NULL
+           AND created_at >= datetime('now', '-30 days') GROUP BY 1 ORDER BY 2 DESC`,
+      )
+      .all() as { reason: string; n: number }[];
+    const answers = (db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE role = 'assistant' AND created_at >= datetime('now', '-30 days')`).get() as { n: number }).n;
+    return {
+      draft: !!draft,
+      total: check.total,
+      question_blocked: check.question_blocked.slice(0, 50),
+      question_blocked_count: check.question_blocked.length,
+      answer_blocked: check.answer_blocked.slice(0, 50),
+      answer_blocked_count: check.answer_blocked.length,
+      recent: { answers, blocked: recent },
+    };
   });
 
   // ----- 시스템 정보 -----

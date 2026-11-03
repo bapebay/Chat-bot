@@ -5,7 +5,7 @@ import { principleContext } from './knowledge/principles.js';
 import { qaSearchText, strength, TOP_K_PRINCIPLE, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
-import { BLOCKED_TEXT, detectInjection, leaksInstructions } from './knowledge/guard.js';
+import { BLOCKED_TEXT, detectInjection, LEAK_REASON, leaksInstructions } from './knowledge/guard.js';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from './knowledge/split.js';
 export { looksLikeFollowUp };
 import type { ChatTurn, LlmClient } from './llm/index.js';
@@ -342,9 +342,16 @@ export async function generateAnswer(
 
   // 3겹: 답변에 내부 지시문이 섞여 나오면 사용자에게 보여주지 않는다
   const shown = json && typeof json.answer_markdown === 'string' ? json.answer_markdown : llmResult.text;
-  // 답변 원칙은 표준답안에서 나온 문장이라 답변에 그대로 쓰일 수 있으므로 비교에서 뺀다
-  const fixed = [getSetting(db, 'system_prompt'), SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n');
-  if (leaksInstructions(shown, fixed)) return { ...usage, ...blockedAnswer('지시문 노출 차단') };
+  // 관리자가 쓴 프롬프트는 마무리 문구·예시처럼 답변에 그대로 쓰게 한 글이 있어 따로 넘긴다 (guard.ts 참고)
+  if (leaksInstructions(shown, [SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n'), getSetting(db, 'system_prompt'))) {
+    // 막은 원문은 관리자만 보는 감사 로그에 남겨 잘못 막힌 것인지 확인할 수 있게 한다 (사용자에게는 보내지 않음)
+    db.prepare(`INSERT INTO audit_logs (user_id, username, action, target, detail) VALUES (NULL, '챗봇(자동)', ?, ?, ?)`).run(
+      '답변 차단(지시문 노출 의심)',
+      question.slice(0, 200),
+      shown.slice(0, 3000),
+    );
+    return { ...usage, ...blockedAnswer(LEAK_REASON) };
+  }
 
   if (!json || typeof json.answer_markdown !== 'string' || !json.answer_markdown.trim()) {
     // 형식을 지키지 않은 답은 본문만 보여주고 근거 카드는 생략

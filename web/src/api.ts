@@ -77,6 +77,7 @@ export interface Citations {
     mode: 'hybrid' | 'keyword';
     qa: { qa_id: string; keyword: number; semantic: number | null; relevant: boolean }[];
     guideline: { id: string; clause: string; keyword: number; semantic: number | null; relevant: boolean }[];
+    principle?: { code: string; keyword: number; semantic: number | null; relevant: boolean }[];
   };
 }
 

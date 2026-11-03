@@ -7,7 +7,7 @@ import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS, SECURITY_RULES } from '../.
 import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/accounts-excel';
 import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
-import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
+import { BLOCKED_TEXT, detectInjection, guardCheck, LEAK_REASON, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { combineQaFiles, isQaMarkdown, MAX_QA_FILES, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
 import { parsePrinciplesCsv, principleContext, principleSearchText } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
@@ -417,7 +417,11 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   const json = parseModelJson(text);
   // 3겹: 답변에 내부 지시문이 섞이면 보여주지 않는다
   const shown = json && typeof json.answer_markdown === 'string' ? json.answer_markdown : text;
-  if (leaksInstructions(shown, [settings.system_prompt, SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n'))) return blockedAnswer('지시문 노출 차단', { ...usage, model: true });
+  // 서버와 같은 규칙: 관리자가 쓴 프롬프트는 그대로 쓰게 한 글(마무리 문구·예시)을 빼고 따로 본다
+  if (leaksInstructions(shown, [SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n'), settings.system_prompt)) {
+    auditLogs.unshift({ id: nextId(), username: '챗봇(자동)', action: '답변 차단(지시문 노출 의심)', target: question.slice(0, 200), detail: shown.slice(0, 3000), created_at: ts() });
+    return blockedAnswer(LEAK_REASON, { ...usage, model: true });
+  }
   if (!json || typeof json.answer_markdown !== 'string' || !json.answer_markdown.trim()) {
     return { ...t, ...usage, text: text.trim(), answerType: '근거답변', citations: { ...t.citations, qa: [], guideline: [] } };
   }
@@ -631,7 +635,12 @@ route('POST', '/api/conversations/:id/messages', 'user', async ({ me, params, bo
   if (!raw) throw new HttpError(400, '질문을 입력해 주세요.');
   const today = kstDate(ts());
   const strikes = reviewQueue.filter(
-    (q) => q.source === 'security' && kstDate(q.created_at) === today && byId(conversations, byId(messages, q.message_id)?.conversation_id)?.user_id === me.id,
+    (q) =>
+      q.source === 'security' &&
+      kstDate(q.created_at) === today &&
+      byId(conversations, byId(messages, q.message_id)?.conversation_id)?.user_id === me.id &&
+      // 답변 단계에서 막힌 것은 질문한 사람 탓이 아니므로 세지 않는다 (서버와 같게)
+      !String(byId(messages, q.message_id)?.citations ?? '').includes(`"security":"${LEAK_REASON}"`),
   ).length;
   if (strikes >= SECURITY_DAILY_STRIKES) throw new HttpError(429, '보안 정책에 맞지 않는 요청이 반복되어 오늘은 질문할 수 없습니다. 필요하면 1:1 문의를 이용해 주세요.', 'DAILY_LIMIT');
   const u = usage(me);
@@ -1025,6 +1034,35 @@ route('DELETE', '/api/admin/knowledge/guidelines/:id', 'admin', ({ params }) => 
   return { ok: true };
 });
 
+// ----- 관리: 보안 차단 점검 (서버와 같은 함수) -----
+route('POST', '/api/admin/prompt/guard-check', 'admin', ({ body }) => {
+  const draft = String(body?.system_prompt ?? '').trim();
+  const v = qaVersions.find((x) => x.status === 'active');
+  const items = v ? qaItems.filter((i) => i.version_id === v.id) : [];
+  const check = guardCheck(items, [SECURITY_RULES, OUTPUT_INSTRUCTIONS].join('\n'), draft || settings.system_prompt);
+  const since = ago(30 * 1440);
+  const recentMsgs = messages.filter((m) => m.role === 'assistant' && m.created_at >= since);
+  const counts = new Map<string, number>();
+  for (const m of recentMsgs) {
+    let reason: string | null = null;
+    try {
+      reason = JSON.parse(m.citations ?? 'null')?.security ?? null;
+    } catch {
+      reason = null;
+    }
+    if (reason) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return {
+    draft: !!draft,
+    total: check.total,
+    question_blocked: check.question_blocked.slice(0, 50),
+    question_blocked_count: check.question_blocked.length,
+    answer_blocked: check.answer_blocked.slice(0, 50),
+    answer_blocked_count: check.answer_blocked.length,
+    recent: { answers: recentMsgs.length, blocked: [...counts].map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n) },
+  };
+});
+
 // ----- 관리: 집행원리 (CSV) -----
 route('GET', '/api/admin/knowledge/principles', 'admin', () => [...principleSets].sort((a, b) => b.id - a.id));
 route('GET', '/api/admin/knowledge/principles/sets/:id/items', 'admin', ({ params, query }) => {
@@ -1139,6 +1177,13 @@ route('GET', '/api/admin/answers', 'admin', ({ query }) => {
         id: m.id,
         conversation_id: c.id,
         answer_type: m.answer_type,
+        security: (() => {
+          try {
+            return JSON.parse(m.citations ?? 'null')?.security ?? null;
+          } catch {
+            return null;
+          }
+        })(),
         content: stripDisclaimer(m.content),
         created_at: m.created_at,
         username: u.username,

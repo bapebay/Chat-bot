@@ -1,5 +1,5 @@
 import type { DB } from './db.js';
-import { SECURITY_DAILY_STRIKES } from './knowledge/guard.js';
+import { LEAK_REASON, SECURITY_DAILY_STRIKES } from './knowledge/guard.js';
 import { getNumberSetting } from './settings.js';
 
 /** 한국 시간 기준 오늘 0시를 DB 시각 형식(UTC, 'YYYY-MM-DD HH:MM:SS')으로 */
@@ -38,9 +38,10 @@ export function securityStrikesToday(db: DB, userId: number): number {
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM review_queue rq JOIN messages m ON m.id = rq.message_id JOIN conversations c ON c.id = m.conversation_id
-       WHERE rq.source = 'security' AND m.created_at >= ? AND c.user_id = ?`,
+       WHERE rq.source = 'security' AND m.created_at >= ? AND c.user_id = ? AND m.citations NOT LIKE ?`,
     )
-    .get(kstDayStartUtc(), userId) as { n: number };
+    // 답변 단계에서 막힌 것(AI가 지시문을 옮겨 적음)은 질문한 사람 탓이 아니므로 세지 않는다
+    .get(kstDayStartUtc(), userId, `%"security":"${LEAK_REASON}"%`) as { n: number };
   return row.n;
 }
 
