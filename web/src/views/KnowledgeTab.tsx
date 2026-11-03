@@ -57,7 +57,20 @@ function errorText(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
-export function FilePicker({ accept, label, busy, onFile }: { accept: string; label: string; busy?: boolean; onFile: (f: File) => void }) {
+export function FilePicker({
+  accept,
+  label,
+  busy,
+  onFile,
+  onFiles,
+}: {
+  accept: string;
+  label: string;
+  busy?: boolean;
+  onFile?: (f: File) => void;
+  /** 주면 여러 파일을 한 번에 고를 수 있다 */
+  onFiles?: (fs: File[]) => void;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -65,11 +78,14 @@ export function FilePicker({ accept, label, busy, onFile }: { accept: string; la
         ref={ref}
         type="file"
         accept={accept}
+        multiple={!!onFiles}
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
+          const fs = Array.from(e.target.files ?? []);
           e.target.value = '';
-          if (f) onFile(f);
+          if (!fs.length) return;
+          if (onFiles) onFiles(fs);
+          else onFile?.(fs[0]);
         }}
       />
       <button type="button" className="btn-primary" disabled={busy} onClick={() => ref.current?.click()}>
@@ -159,14 +175,21 @@ function QaSection({ onChanged }: { onChanged: () => void }) {
     load();
   }, [load]);
 
-  async function upload(f: File) {
+  async function upload(fs: File[]) {
+    if (fs.length > 30) {
+      setMessage({ kind: 'error', text: '한 번에 30개 파일까지 올릴 수 있습니다.' });
+      return;
+    }
     setBusy(true);
     setMessage(null);
     const form = new FormData();
-    form.append('file', f);
+    for (const f of fs) form.append('file', f);
     try {
       const v = await api<QaVersion>('/api/admin/knowledge/qa/upload', { body: form });
-      setMessage({ kind: 'success', text: `읽기 완료: ${v.item_count}건. 아래 ‘미리보기’ 버전을 확인한 뒤 [서비스에 적용]을 누르세요.` });
+      setMessage({
+        kind: 'success',
+        text: `읽기 완료: ${fs.length > 1 ? `파일 ${fs.length}개를 합쳐 ` : ''}${v.item_count}건. 아래 ‘미리보기’ 버전을 확인한 뒤 [서비스에 적용]을 누르세요.`,
+      });
       await load();
       setViewing(v);
     } catch (err) {
@@ -209,14 +232,17 @@ function QaSection({ onChanged }: { onChanged: () => void }) {
             <a className="btn-secondary" href="/api/admin/knowledge/qa/template">
               <Download className="h-4 w-4" /> 양식 받기
             </a>
-            <FilePicker accept=".xlsx,.md,.markdown" label="엑셀·MD 올리기" busy={busy} onFile={upload} />
+            <FilePicker accept=".xlsx,.md,.markdown" label="엑셀·MD 올리기 (여러 개 가능)" busy={busy} onFiles={upload} />
           </div>
         </div>
         <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-500 dark:text-slate-400">
           <li>‘통합질의’ 시트를 읽습니다. 머리글: 통합번호 · 대분류 · 중분류 · 소분류 · 대표 질의 · 요지 체크리스트 · 통합 답안 · 연결형 답변 · 검수상태 (· 답변 변경 이력)</li>
           <li>
-            MD(마크다운) 파일도 올릴 수 있습니다. ① 엑셀과 같은 머리글의 표로 쓰거나, ② 답안마다 ‘## 통합번호’ 제목 아래 ‘- 대표 질의: …’, ‘- 통합 답안: …’ 줄로 씁니다(여러 줄 답안은
-            다음 줄에 이어 쓰거나 ‘### 통합 답안’ 소제목 아래에 씀). 머리글 이름·검수상태·경고 규칙은 엑셀과 같습니다.
+            <b>파트별로 나눈 여러 파일</b>(MD·엑셀, 30개까지)을 한 번에 골라 올리면 하나의 버전으로 합칩니다. 파일끼리 통합번호가 겹치면 경고합니다.
+          </li>
+          <li>
+            MD(마크다운)는 ① 질문·답변 열이 있는 표(머리글: 대표 질의·질문·질의 / 통합 답안·답변·답안 등)나 ② 답안마다 ‘질문: …’, ‘답변: …’(또는 Q. / A.) 줄, ③ 질문
+            제목(‘### …나요?’) 아래 답변 본문 모양을 읽습니다. 통합번호가 없으면 ‘파일이름-001’처럼 붙이고, 검수상태 칸이 아예 없는 파일은 모두 ‘확정’으로 봅니다.
           </li>
           <li>올리면 먼저 ‘미리보기’로 저장됩니다. 건수·경고를 확인한 뒤 [서비스에 적용]을 눌러야 챗봇에 반영됩니다.</li>
           <li>검수상태가 ‘확정’인 행만 씁니다. 미검수 사용 여부는 ‘검색 설정’에서 바꿀 수 있습니다.</li>

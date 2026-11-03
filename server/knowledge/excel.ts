@@ -26,16 +26,16 @@ export type QaField = Exclude<keyof ParsedQaItem, 'row' | 'is_referral' | 'refer
 
 // 엑셀 머리글(공백·괄호 무시) → 필드
 export const QA_HEADERS: Record<QaField, string[]> = {
-  qa_id: ['통합번호', '번호', 'id'],
-  category1: ['대분류', '사업유형'],
-  category2: ['중분류'],
-  category3: ['소분류', '소분류코드'],
-  question: ['대표질의', '대표질문', '질의'],
-  checklist: ['요지체크리스트', '요지', '체크리스트'],
-  answer: ['통합답안', '표준답안', '답안'],
+  qa_id: ['통합번호', '번호', 'id', '문항번호', '질문번호', '질의번호', '답안번호', '표준답안번호', '코드', 'no', 'qaid'],
+  category1: ['대분류', '사업유형', '사업', '재원'],
+  category2: ['중분류', '분류', '분야', '구분', '비목', '항목'],
+  category3: ['소분류', '소분류코드', '세분류', '세부분류'],
+  question: ['대표질의', '대표질문', '질의', '질문', '질의내용', '질문내용', '문의내용', '질의사항', 'q', '문'],
+  checklist: ['요지체크리스트', '요지', '체크리스트', '키워드', '질문키워드', '핵심어', '핵심요지'],
+  answer: ['통합답안', '표준답안', '답안', '답변', '답변내용', '회신', '회신내용', '답', 'a'],
   referral: ['연결형답변', '연결형', '연결형여부'],
-  review_status: ['검수상태', '검수'],
-  change_history: ['답변변경이력', '변경이력'],
+  review_status: ['검수상태', '검수', '검수여부'],
+  change_history: ['답변변경이력', '변경이력', '이력'],
 };
 
 export function normHeader(s: string): string {

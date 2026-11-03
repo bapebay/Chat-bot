@@ -1,5 +1,6 @@
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
+import { MAX_QA_FILES } from './knowledge/qa-markdown.js';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import fs from 'node:fs';
@@ -44,7 +45,7 @@ export async function buildApp({
   securityHeaders(app, { hsts: config.cookieSecure });
   if (limitRequests) rateLimit(app, DEFAULT_RATE_RULES);
   await app.register(cookie);
-  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
+  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: MAX_QA_FILES } });
 
   app.get('/api/meta', async () => ({
     org_types: ORG_TYPES,

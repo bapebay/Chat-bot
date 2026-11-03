@@ -8,7 +8,7 @@ import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/acco
 import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
-import { isQaMarkdown, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
+import { combineQaFiles, isQaMarkdown, MAX_QA_FILES, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
 import { parsePrinciplesCsv, principleContext, principleSearchText } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, chunkTextFile, extractPdfPages } from '../../../server/knowledge/guideline';
@@ -963,13 +963,24 @@ const asBuffer = (b: ArrayBuffer) => b as unknown as Parameters<typeof parseQaWo
 const bad = (e: unknown) => new HttpError(400, (e as Error).message);
 
 route('POST', '/api/admin/knowledge/qa/upload', 'admin', async ({ body }) => {
-  const f = await readFile(body, /\.(xlsx|md|markdown)$/i);
-  let parsed;
-  try {
-    parsed = isQaMarkdown(f.name) ? parseQaMarkdown(new Uint8Array(f.buf)) : await parseQaWorkbook(asBuffer(f.buf));
-  } catch (e) {
-    throw bad(e);
+  // 파트별로 나눈 여러 파일을 하나의 버전으로 합친다 (서버와 같은 규칙)
+  const files = body instanceof FormData ? body.getAll('file').filter((x): x is File => x instanceof File) : [];
+  if (!files.length) throw new HttpError(400, '파일을 선택해 주세요.');
+  if (files.length > MAX_QA_FILES) throw new HttpError(400, `한 번에 ${MAX_QA_FILES}개 파일까지 올릴 수 있습니다.`);
+  const results = [];
+  for (const file of files) {
+    if (!/\.(xlsx|md|markdown)$/i.test(file.name)) throw new HttpError(400, `지원하지 않는 파일 형식입니다: ${file.name}`);
+    if (file.size > 15 * 1024 * 1024) throw new HttpError(400, `파일이 너무 큽니다 (파일마다 15MB 이하): ${file.name}`);
+    const buf = await file.arrayBuffer();
+    try {
+      const r = isQaMarkdown(file.name) ? parseQaMarkdown(new Uint8Array(buf), file.name) : await parseQaWorkbook(asBuffer(buf));
+      results.push({ name: file.name, items: r.items, warnings: r.warnings });
+    } catch (e) {
+      throw new HttpError(400, files.length > 1 ? `${file.name}: ${(e as Error).message}` : (e as Error).message);
+    }
   }
+  const parsed = combineQaFiles(results);
+  const f = { name: parsed.filename };
   // 적용하지 않은 이전 미리보기는 지운다
   for (const v of qaVersions.filter((x) => x.status === 'draft')) qaItems = qaItems.filter((i) => i.version_id !== v.id);
   qaVersions.splice(0, qaVersions.length, ...qaVersions.filter((x) => x.status !== 'draft'));
