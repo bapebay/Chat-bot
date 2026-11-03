@@ -12,7 +12,7 @@ const fakeLlm = (fail = false): LlmClient => ({
   model: 'fake-1',
   async generate(req) {
     if (fail) throw new Error('boom');
-    const ids = [...req.messages.at(-1)!.content.matchAll(/\[지침 (G\d+)/g)].map((m) => ({ id: m[1], clause: '', page: '' }));
+    const ids = [...req.messages.at(-1)!.content.matchAll(/\[지침 및 FAQ (G\d+)/g)].map((m) => ({ id: m[1], clause: '', page: '' }));
     return {
       text: JSON.stringify({ answer_type: '근거답변', business_type: '공통', answer_markdown: `답변: ${req.messages.at(-1)!.content.slice(-40)}`, cited_qa_ids: [], cited_guideline: ids.slice(0, 1), referral: '없음' }),
       provider: 'fake', model: 'fake-1', inputTokens: 10, outputTokens: 5,

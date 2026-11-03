@@ -14,7 +14,13 @@ import {
   listGuidelineDocs,
   listQaItems,
   listQaVersions,
+  activatePrincipleSet,
+  deletePrincipleSet,
+  listPrinciples,
+  listPrincipleSets,
+  savePrincipleSet,
 } from '../knowledge/store.js';
+import { parsePrinciplesCsv, principlesTemplateCsv } from '../knowledge/principles.js';
 import { idParam, str } from './util.js';
 
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -177,4 +183,51 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     return { ok: true };
   });
 
+
+  // ----- 집행원리 (근거 2단계: 지침·FAQ 다음, 표준답안 앞) -----
+  app.get('/api/admin/knowledge/principles/template', { preHandler: admin }, async (_req, reply) =>
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent('집행원리_양식.csv')}`)
+      .send(principlesTemplateCsv()),
+  );
+
+  app.get('/api/admin/knowledge/principles', { preHandler: admin }, async () => listPrincipleSets(db));
+
+  app.get('/api/admin/knowledge/principles/sets/:id/items', { preHandler: admin }, async (req) => {
+    const id = idParam((req.params as { id: string }).id) ?? 0;
+    return listPrinciples(db, id, str((req.query as Record<string, unknown>).q));
+  });
+
+  app.post('/api/admin/knowledge/principles/upload', { preHandler: admin }, async (req, reply) => {
+    const up = await readUpload(req, reply, /\.csv$/i);
+    if (!up) return reply;
+    let parsed: ReturnType<typeof parsePrinciplesCsv>;
+    try {
+      parsed = parsePrinciplesCsv(up.buffer);
+    } catch (e) {
+      return fail(reply, e);
+    }
+    const id = savePrincipleSet(db, up.filename, req.user.id, parsed.items, parsed.warnings);
+    kb.rebuild();
+    audit(db, req.user, '집행원리 업로드', up.filename, `${parsed.items.length}건`);
+    return { id, item_count: parsed.items.length, warnings: parsed.warnings };
+  });
+
+  app.post('/api/admin/knowledge/principles/sets/:id/activate', { preHandler: admin }, async (req, reply) => {
+    const id = idParam((req.params as { id: string }).id) ?? 0;
+    if (!activatePrincipleSet(db, id)) return reply.code(404).send({ error: '집행원리 묶음을 찾을 수 없습니다.' });
+    kb.rebuild();
+    audit(db, req.user, '집행원리 되돌리기', `#${id}`);
+    return { ok: true };
+  });
+
+  app.delete('/api/admin/knowledge/principles/sets/:id', { preHandler: admin }, async (req, reply) => {
+    const id = idParam((req.params as { id: string }).id) ?? 0;
+    const r = deletePrincipleSet(db, id);
+    if (r === 'missing') return reply.code(404).send({ error: '집행원리 묶음을 찾을 수 없습니다.' });
+    if (r === 'active') return reply.code(400).send({ error: '사용 중인 묶음은 지울 수 없습니다. 다른 묶음을 먼저 사용하세요.' });
+    audit(db, req.user, '집행원리 묶음 삭제', `#${id}`);
+    return { ok: true };
+  });
 }

@@ -8,6 +8,7 @@ import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/acco
 import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
+import { parsePrinciplesCsv } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
@@ -141,6 +142,9 @@ const messages: Json[] = [];
 const feedback: Json[] = [];
 const reviewQueue: Json[] = [];
 const inquiries: Json[] = [];
+// 집행원리 (CSV로 올린 묶음. 사용 중인 묶음은 하나)
+const principleSets: Json[] = [];
+const principles: Json[] = [];
 
 // ================= 검색 (실제 서버의 BM25·핵심어 비율 사용) =================
 const num = (k: string) => Number(settings[k]);
@@ -160,6 +164,11 @@ function activeGuides(): Json[] {
       const d = guidelineDocs.find((x) => x.id === c.doc_id)!;
       return { ...c, doc_name: d.name, doc_kind: d.kind };
     });
+}
+
+function activePrinciples(): Json[] {
+  const set = principleSets.find((x) => x.status === 'active');
+  return set ? principles.filter((p) => p.set_id === set.id) : [];
 }
 
 function rank(docs: Json[], texts: string[], query: string, tk: number) {
@@ -184,12 +193,15 @@ function search(query: string, businessType: string) {
   };
   const qaHits = pick(qa, num('top_k_qa'));
   const gHits = pick(rank(guides, guides.map((g) => `${g.clause}\n${g.text}`), query, tk), num('top_k_guideline'));
+  const prs = activePrinciples();
+  const pHits = pick(rank(prs, prs.map((p) => [p.category, p.text].filter(Boolean).join('\n')), query, tk), 4);
   const oos = rank(outOfScope, outOfScope.map((o) => o.question), query, tk).sort((a, b) => b.score - a.score)[0];
   return {
     qa: qaHits,
     guideline: gHits,
+    principle: pHits,
     outOfScope: oos && oos.relevant ? oos : null,
-    passed: qaHits.some((h) => h.relevant) || gHits.some((h) => h.relevant),
+    passed: qaHits.some((h) => h.relevant) || gHits.some((h) => h.relevant) || pHits.some((h) => h.relevant),
     mode: 'keyword' as const,
   };
 }
@@ -200,6 +212,7 @@ function overlapsEvidence(query: string, r: Json): boolean {
   const texts = [
     ...r.qa.filter((h: Json) => h.relevant).map((h: Json) => `${qaText(h.doc)}\n${h.doc.answer}`),
     ...r.guideline.filter((h: Json) => h.relevant).map((h: Json) => `${h.doc.clause}\n${h.doc.text}`),
+    ...r.principle.filter((h: Json) => h.relevant).map((h: Json) => `${h.doc.category}\n${h.doc.text}`),
   ];
   return texts.some((t: string) => tokenize(t).some((tok) => tokens.has(tok)));
 }
@@ -214,8 +227,9 @@ function generateAnswer(history: Json[], businessType: string, question: string)
   if (parts.length === 1 && !r.passed) parts = splitByAnd(query);
   const partResults = parts.length > 1 ? parts.map((p) => search(p, businessType)) : [];
   if (partResults.length) {
-    r = mergeSearchResults(r, partResults, { qa: (h: Json) => h.doc.id, guideline: (h: Json) => h.doc.id }, {
+    r = mergeSearchResults(r, partResults, { qa: (h: Json) => h.doc.id, guideline: (h: Json) => h.doc.id, principle: (h: Json) => h.doc.id }, {
       perPart: 3,
+      maxPrinciple: Math.min(8, 4 + parts.length),
       maxQa: Math.min(12, Math.max(num('top_k_qa'), 3 * parts.length)),
       maxGuide: Math.min(6, num('top_k_guideline') + parts.length),
     });
@@ -236,9 +250,10 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     mode: r.mode,
     qa: r.qa.map((h: Json) => ({ qa_id: h.doc.qa_id, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
     guideline: r.guideline.map((h: Json, i: number) => ({ id: `G${i + 1}`, clause: h.doc.clause, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
+    principle: r.principle.map((h: Json, i: number) => ({ id: `P${i + 1}`, code: h.doc.code, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
   };
   const base = { business_type: null, referral: null as string | null, qa: [] as Json[], guideline: [] as Json[], out_of_scope: null as Json, retrieved };
-  const best = Math.max(r.qa.find((h: Json) => h.relevant)?.keyword ?? 0, r.guideline.find((h: Json) => h.relevant)?.keyword ?? 0);
+  const best = Math.max(r.qa.find((h: Json) => h.relevant)?.keyword ?? 0, r.guideline.find((h: Json) => h.relevant)?.keyword ?? 0, r.principle.find((h: Json) => h.relevant)?.keyword ?? 0);
   if (r.outOfScope && r.outOfScope.keyword >= best) {
     const o = r.outOfScope.doc;
     return {
@@ -269,16 +284,19 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     : (referral ? relQa.slice(0, 1) : relQa.slice(0, 2)).map((h: Json) => h.doc);
   const g = r.guideline.findIndex((h: Json) => h.relevant);
   const citedGuide = g >= 0 ? [{ ...r.guideline[g].doc, id: `G${g + 1}` }] : [];
+  // 표준답안이 없으면 집행원리 문장으로 안내 (집행원리 번호는 밖에 보이지 않는다)
+  const relPrinciple = citedQa.length ? [] : r.principle.filter((h: Json) => h.relevant).slice(0, 2).map((h: Json) => h.doc);
   const lines = [
     `**질의 요약**: ${question.slice(0, 100)}`,
     '',
     referral
       ? `**답변 요약**: 지역앵커센터 확인이 필요한 사항입니다. 아래 원칙을 참고하세요.`
-      : `**답변 요약**: ${citedQa.length ? `표준답안 ${citedQa.map((q: Json) => q.qa_id).join(', ')}` : '지침 조항'}에 근거해 안내합니다.`,
+      : `**답변 요약**: ${citedQa.length ? `표준답안 ${citedQa.map((q: Json) => q.qa_id).join(', ')}` : relPrinciple.length ? '사업비 집행 원칙' : '지침 조항'}에 근거해 안내합니다.`,
     '',
     '**상세 안내**',
     ...citedQa.map((q: Json) => `- ${q.answer}`),
-    ...(citedQa.length ? [] : citedGuide.map((c: Json) => `- ${c.text.split('\n').slice(1).join(' ')}`)),
+    ...relPrinciple.map((p: Json) => `- ${p.text}`),
+    ...(citedQa.length || relPrinciple.length ? [] : citedGuide.map((c: Json) => `- ${c.text.split('\n').slice(1).join(' ')}`)),
     '',
     '**유의사항**: (데모) 이 페이지는 실제 AI 대신 테스트 모델이 검색된 표준답안 문장을 그대로 보여줍니다. 실제 서비스에서는 AI가 질문 상황에 맞춰 문장을 다시 씁니다.',
   ];
@@ -312,7 +330,21 @@ function generateAnswer(history: Json[], businessType: string, question: string)
 // ----- 실제 AI 답변: 실서비스(server/chat.ts)와 같은 프롬프트·근거 형식·출력 규칙 -----
 const clean = (s: string) => s.replace(/[|\]]/g, '/');
 function buildContext(r: Json): string {
+  // 근거 계층 순서대로: 1단계 지침 및 FAQ → 2단계 집행원리 → 3단계 표준답안 (서버와 같게)
   const parts: string[] = [];
+  r.guideline.forEach((h: Json, i: number) => parts.push(`[지침 및 FAQ G${i + 1} | ${clean(h.doc.clause)} | 문서: ${clean(h.doc.doc_name)} | 쪽: ${h.doc.page ?? ''}]\n${h.doc.text}`));
+  (r.principle ?? []).forEach((h: Json, i: number) => {
+    const d = h.doc;
+    parts.push(
+      [
+        `[집행원리 P${i + 1} | 번호: ${clean(d.code)} | 분야: ${clean(d.category) || '-'} | 재원: ${clean(d.funding) || '-'} | 적용 시기: ${clean(d.period) || '-'}]`,
+        d.text,
+        d.note ? `비고: ${d.note}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  });
   for (const h of r.qa) {
     const d = h.doc;
     parts.push(
@@ -328,7 +360,6 @@ function buildContext(r: Json): string {
         .join('\n'),
     );
   }
-  r.guideline.forEach((h: Json, i: number) => parts.push(`[지침 G${i + 1} | ${clean(h.doc.clause)} | 문서: ${clean(h.doc.doc_name)} | 쪽: ${h.doc.page ?? ''}]\n${h.doc.text}`));
   return parts.join('\n\n');
 }
 function parseModelJson(text: string): Json | null {
@@ -360,7 +391,7 @@ function blockedAnswer(reason: string, extra: Json = {}) {
     ...extra,
     text: BLOCKED_TEXT,
     answerType: '답변범위외',
-    citations: { business_type: null, referral: null, qa: [], guideline: [], out_of_scope: null, security: reason, retrieved: { mode: 'keyword', qa: [], guideline: [] } },
+    citations: { business_type: null, referral: null, qa: [], guideline: [], out_of_scope: null, security: reason, retrieved: { mode: 'keyword', qa: [], guideline: [], principle: [] } },
   };
 }
 
@@ -378,7 +409,7 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   let recent = history.slice(-6);
   while (recent.length && recent[0].role !== 'user') recent = recent.slice(1);
   const hist = recent.map((m) => `${m.role === 'user' ? '사용자' : '챗봇'}: ${stripDisclaimer(m.content)}`).join('\n\n');
-  const input = `${system}\n\n# 이전 대화\n${hist || '(없음)'}\n\n[근거 자료]\n${buildContext(r)}\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n${t.multi ? `${t.multi}\n\n` : ''}[질문]\n${question}`;
+  const input = `${system}\n\n# 이전 대화\n${hist || '(없음)'}\n\n<근거자료>\n${buildContext(r)}\n</근거자료>\n\n[사용자가 선택한 사업 유형: ${businessType}]\n\n${t.multi ? `${t.multi}\n\n` : ''}[질문]\n${question}`;
   const started = Date.now();
   let text: string;
   try {
@@ -897,6 +928,7 @@ route('GET', '/api/admin/system', 'admin', () => ({
 route('GET', '/api/admin/knowledge/status', 'admin', () => ({
   qa: activeQa().length,
   guideline: activeGuides().length,
+  principle: activePrinciples().length,
   out_of_scope: outOfScope.length,
   semantic_model: null,
   semantic_ready: false,
@@ -990,6 +1022,45 @@ route('DELETE', '/api/admin/knowledge/guidelines/:id', 'admin', ({ params }) => 
   if (!d) throw new HttpError(404, '문서를 찾을 수 없습니다.');
   guidelineDocs.splice(guidelineDocs.indexOf(d), 1);
   audit('지침 문서 삭제', d.name);
+  return { ok: true };
+});
+
+// ----- 관리: 집행원리 (CSV) -----
+route('GET', '/api/admin/knowledge/principles', 'admin', () => [...principleSets].sort((a, b) => b.id - a.id));
+route('GET', '/api/admin/knowledge/principles/sets/:id/items', 'admin', ({ params, query }) => {
+  const q = query.get('q') ?? '';
+  return principles.filter((p) => p.set_id === Number(params[0]) && (!q || [p.code, p.category, p.text].some((t) => t.includes(q)))).slice(0, 300);
+});
+route('POST', '/api/admin/knowledge/principles/upload', 'admin', async ({ body }) => {
+  const f = await readFile(body, /\.csv$/i);
+  let parsed;
+  try {
+    parsed = parsePrinciplesCsv(new Uint8Array(f.buf));
+  } catch (e) {
+    throw bad(e);
+  }
+  principleSets.forEach((x) => x.status === 'active' && (x.status = 'archived'));
+  const set = { id: nextId(), filename: f.name, uploaded_by_name: users.find((u) => u.id === currentUserId)?.username ?? null, status: 'active', item_count: parsed.items.length, warnings: parsed.warnings, created_at: ts(), activated_at: ts() };
+  principleSets.push(set);
+  for (const { row: _row, ...p } of parsed.items) principles.push({ id: nextId(), set_id: set.id, ...p });
+  audit('집행원리 업로드', `#${set.id} ${f.name}`, `${parsed.items.length}건`);
+  return set;
+});
+route('POST', '/api/admin/knowledge/principles/sets/:id/activate', 'admin', ({ params }) => {
+  const set = byId(principleSets, params[0]);
+  if (!set) throw new HttpError(404, '묶음을 찾을 수 없습니다.');
+  principleSets.forEach((x) => x.status === 'active' && (x.status = 'archived'));
+  Object.assign(set, { status: 'active', activated_at: ts() });
+  audit('집행원리 묶음 사용', `#${set.id} ${set.filename}`);
+  return { ok: true };
+});
+route('DELETE', '/api/admin/knowledge/principles/sets/:id', 'admin', ({ params }) => {
+  const set = byId(principleSets, params[0]);
+  if (!set) throw new HttpError(404, '묶음을 찾을 수 없습니다.');
+  if (set.status === 'active') throw new HttpError(400, '사용 중인 묶음은 삭제할 수 없습니다. 다른 묶음을 먼저 사용하세요.');
+  principleSets.splice(principleSets.indexOf(set), 1);
+  for (let i = principles.length - 1; i >= 0; i--) if (principles[i].set_id === set.id) principles.splice(i, 1);
+  audit('집행원리 묶음 삭제', `#${set.id} ${set.filename}`);
   return { ok: true };
 });
 
@@ -1127,7 +1198,7 @@ export function onResetStorage(fn: () => Promise<void>) {
   resetStorage = fn;
 }
 
-const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries };
+const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries, principleSets, principles };
 export function exportState(): Json {
   return {
     v: 1,

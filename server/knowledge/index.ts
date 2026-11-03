@@ -28,6 +28,17 @@ export interface GuidelineDoc {
   text: string;
 }
 
+/** 집행원리: 질의응답 사례에서 뽑은 일반 집행 기준 (근거 2단계) */
+export interface PrincipleDoc {
+  id: number;
+  code: string;
+  category: string;
+  funding: string;
+  period: string;
+  text: string;
+  note: string;
+}
+
 export interface OutOfScopeDoc {
   id: number;
   question: string;
@@ -50,11 +61,15 @@ export interface Hit<T> {
 export interface SearchResult {
   qa: Hit<QaDoc>[];
   guideline: Hit<GuidelineDoc>[];
+  principle: Hit<PrincipleDoc>[];
   outOfScope: Hit<OutOfScopeDoc> | null;
   /** 근거로 쓸 만한 항목이 하나라도 있는지 */
   passed: boolean;
   mode: 'hybrid' | 'keyword';
 }
+
+/** 질문마다 AI에 넘기는 집행원리 최대 건수 */
+export const TOP_K_PRINCIPLE = 4;
 
 /** 검수상태가 '확정'인지 (공백·표기 차이 허용) */
 export function isConfirmed(status: string): boolean {
@@ -63,6 +78,10 @@ export function isConfirmed(status: string): boolean {
 
 export function qaSearchText(d: Pick<QaDoc, 'question' | 'checklist' | 'category2' | 'category3'>): string {
   return [d.question, d.checklist, d.category2, d.category3].filter(Boolean).join('\n');
+}
+
+export function principleSearchText(d: Pick<PrincipleDoc, 'category' | 'text'>): string {
+  return [d.category, d.text].filter(Boolean).join('\n');
 }
 
 function guidelineSearchText(d: GuidelineDoc): string {
@@ -110,6 +129,7 @@ class Corpus<T> {
 export class KnowledgeBase {
   private qa = new Corpus<QaDoc>([], []);
   private guideline = new Corpus<GuidelineDoc>([], []);
+  private principle = new Corpus<PrincipleDoc>([], []);
   private oos = new Corpus<OutOfScopeDoc>([], []);
   private generation = 0;
   private embeddingReady: Promise<void> = Promise.resolve();
@@ -129,9 +149,10 @@ export class KnowledgeBase {
     return {
       qa: this.qa.docs.length,
       guideline: this.guideline.docs.length,
+      principle: this.principle.docs.length,
       out_of_scope: this.oos.docs.length,
       semantic_model: this.embedder?.name ?? null,
-      semantic_ready: !!this.embedder && this.qa.vectors !== null && this.guideline.vectors !== null && this.oos.vectors !== null,
+      semantic_ready: !!this.embedder && this.qa.vectors !== null && this.guideline.vectors !== null && this.principle.vectors !== null && this.oos.vectors !== null,
       semantic_error: this.embeddingError,
     };
   }
@@ -155,13 +176,18 @@ export class KnowledgeBase {
          WHERE d.active = 1 ORDER BY d.id, c.seq`,
       )
       .all() as GuidelineDoc[];
+    const principleDocs = this.db
+      .prepare(`SELECT p.* FROM principles p JOIN principle_sets s ON s.id = p.set_id WHERE s.status = 'active' ORDER BY p.id`)
+      .all() as PrincipleDoc[];
     const oosDocs = this.db.prepare('SELECT * FROM out_of_scope ORDER BY id').all() as OutOfScopeDoc[];
 
     const qa = new Corpus(qaDocs, qaDocs.map(qaSearchText));
     const guideline = new Corpus(guideDocs, guideDocs.map(guidelineSearchText));
+    const principle = new Corpus(principleDocs, principleDocs.map(principleSearchText));
     const oos = new Corpus(oosDocs, oosDocs.map((d) => d.question));
     this.qa = qa;
     this.guideline = guideline;
+    this.principle = principle;
     this.oos = oos;
 
     if (!this.embedder) return Promise.resolve();
@@ -169,12 +195,12 @@ export class KnowledgeBase {
     this.embeddingError = null;
     this.embeddingReady = (async () => {
       try {
-        for (const corpus of [qa, guideline, oos] as Corpus<unknown>[]) {
+        for (const corpus of [qa, guideline, principle, oos] as Corpus<unknown>[]) {
           const vectors = await embedPassagesCached(this.db, embedder, corpus.texts);
           if (gen !== this.generation) return; // 그사이 데이터가 또 바뀜
           corpus.vectors = vectors;
         }
-        this.log(`의미 검색 색인 완료 (표준답안 ${qa.docs.length}, 지침 ${guideline.docs.length}, 범위 외 ${oos.docs.length})`);
+        this.log(`의미 검색 색인 완료 (표준답안 ${qa.docs.length}, 지침 ${guideline.docs.length}, 집행원리 ${principle.docs.length})`);
       } catch (e) {
         this.embeddingError = (e as Error).message;
         this.log(`의미 검색 색인 실패, 키워드 검색만 사용: ${this.embeddingError}`);
@@ -222,13 +248,15 @@ export class KnowledgeBase {
 
     const qa = pick(qaHits, topQa);
     const guideline = pick(this.guideline.rank(query, qv, thresholds), topGuide);
+    const principle = pick(this.principle.rank(query, qv, thresholds), TOP_K_PRINCIPLE);
     const oosTop = this.oos.rank(query, qv, thresholds).sort((a, b) => b.score - a.score)[0] ?? null;
 
     return {
       qa,
       guideline,
+      principle,
       outOfScope: oosTop && oosTop.relevant ? oosTop : null,
-      passed: qa.some((h) => h.relevant) || guideline.some((h) => h.relevant),
+      passed: qa.some((h) => h.relevant) || guideline.some((h) => h.relevant) || principle.some((h) => h.relevant),
       mode: qv ? 'hybrid' : 'keyword',
     };
   }

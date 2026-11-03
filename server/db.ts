@@ -120,6 +120,29 @@ CREATE TABLE IF NOT EXISTS out_of_scope (
   department TEXT NOT NULL DEFAULT ''
 );
 
+-- 집행원리: 질의응답 사례에서 뽑은 일반 집행 기준 (근거 2단계). CSV 한 번 올릴 때마다 한 묶음, 하나만 사용 중
+CREATE TABLE IF NOT EXISTS principle_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'archived',
+  item_count INTEGER NOT NULL DEFAULT 0,
+  warnings TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  activated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS principles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  set_id INTEGER NOT NULL REFERENCES principle_sets(id) ON DELETE CASCADE,
+  code TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  funding TEXT NOT NULL DEFAULT '',
+  period TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_principles_set ON principles(set_id, id);
+
 -- 지침·FAQ 원문. 조항 단위로 쪼개 guideline_chunks 에 저장
 CREATE TABLE IF NOT EXISTS guideline_docs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

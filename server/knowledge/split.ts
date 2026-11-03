@@ -82,6 +82,7 @@ interface HitLike {
 interface ResultLike {
   qa: HitLike[];
   guideline: HitLike[];
+  principle?: HitLike[];
   passed: boolean;
 }
 
@@ -93,8 +94,12 @@ interface ResultLike {
 export function mergeSearchResults<R extends ResultLike>(
   whole: R,
   parts: R[],
-  key: { qa: (h: R['qa'][number]) => string | number; guideline: (h: R['guideline'][number]) => string | number },
-  limits: { perPart: number; maxQa: number; maxGuide: number },
+  key: {
+    qa: (h: R['qa'][number]) => string | number;
+    guideline: (h: R['guideline'][number]) => string | number;
+    principle?: (h: NonNullable<R['principle']>[number]) => string | number;
+  },
+  limits: { perPart: number; maxQa: number; maxGuide: number; maxPrinciple?: number },
 ): R {
   // 질문마다 1순위 근거부터 번갈아 넣어, 한 질문의 근거가 자리를 다 차지하지 않게 한다
   const merge = <H extends HitLike>(first: H[], lists: H[][], k: (h: H) => string | number, max: number) => {
@@ -117,7 +122,11 @@ export function mergeSearchResults<R extends ResultLike>(
   };
   const qa = merge(whole.qa, parts.map((p) => p.qa), key.qa, limits.maxQa);
   const guideline = merge(whole.guideline, parts.map((p) => p.guideline), key.guideline, limits.maxGuide);
-  return { ...whole, qa, guideline, passed: whole.passed || parts.some((p) => p.passed) };
+  const principle =
+    whole.principle && key.principle
+      ? merge(whole.principle, parts.map((p) => p.principle ?? []), key.principle, limits.maxPrinciple ?? whole.principle.length)
+      : whole.principle;
+  return { ...whole, qa, guideline, principle, passed: whole.passed || parts.some((p) => p.passed) };
 }
 
 /** 여러 질문일 때 AI에게 붙이는 안내 */

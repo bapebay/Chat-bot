@@ -41,6 +41,7 @@ interface QaItem {
 interface Status {
   qa: number;
   guideline: number;
+  principle: number;
   out_of_scope: number;
   semantic_model: string | null;
   semantic_ready: boolean;
@@ -48,7 +49,7 @@ interface Status {
   active_version: QaVersion | null;
 }
 
-type Section = 'qa' | 'qa-edit' | 'guideline' | 'search';
+type Section = 'qa' | 'qa-edit' | 'guideline' | 'principle' | 'search';
 
 const STATUS_LABEL = { draft: '미리보기', active: '서비스 중', archived: '보관' };
 
@@ -96,15 +97,17 @@ export function KnowledgeTab() {
     { key: 'qa', label: '표준 Q&A 엑셀' },
     { key: 'qa-edit', label: '표준답안 관리' },
     { key: 'guideline', label: '지침·FAQ 원문' },
+    { key: 'principle', label: '집행원리' },
     { key: 'search', label: '검색 설정' },
   ];
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4">
       {status && (
-        <div className="grid grid-cols-3 gap-3">
-          <Stat label="검색 중인 표준답안" value={status.qa} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="지침·FAQ 조항" value={status.guideline} />
+          <Stat label="집행원리" value={status.principle ?? 0} />
+          <Stat label="검색 중인 표준답안" value={status.qa} />
           <div className="card p-3 text-center">
             <div className={`text-sm font-bold ${status.semantic_ready ? 'text-green-600 dark:text-green-400' : 'text-slate-500'}`}>
               {status.semantic_model ? (status.semantic_ready ? '키워드 + 의미' : '의미 색인 계산 중…') : '키워드만'}
@@ -128,6 +131,7 @@ export function KnowledgeTab() {
       {section === 'qa' && <QaSection onChanged={loadStatus} />}
       {section === 'guideline' && <GuidelineSection onChanged={loadStatus} />}
       {section === 'qa-edit' && <QaPanel isAdmin />}
+      {section === 'principle' && <PrincipleSection onChanged={loadStatus} />}
       {section === 'search' && <SearchSection status={status} onChanged={loadStatus} />}
     </div>
   );
@@ -514,5 +518,187 @@ function SearchSection({ status, onChanged }: { status: Status | null; onChanged
       </div>
       {message && <Notice kind={message.kind}>{message.text}</Notice>}
     </section>
+  );
+}
+
+// ================= 집행원리 (근거 2단계) =================
+
+interface PrincipleSet {
+  id: number;
+  filename: string;
+  uploaded_by_name: string | null;
+  status: 'active' | 'archived';
+  item_count: number;
+  warnings: string[];
+  created_at: string;
+}
+
+interface PrincipleItem {
+  id: number;
+  code: string;
+  category: string;
+  funding: string;
+  period: string;
+  text: string;
+  note: string;
+}
+
+function PrincipleSection({ onChanged }: { onChanged: () => void }) {
+  const [sets, setSets] = useState<PrincipleSet[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string; warnings?: string[] } | null>(null);
+  const [openId, setOpenId] = useState<number | null>(null);
+
+  const load = useCallback(async () => setSets(await api<PrincipleSet[]>('/api/admin/knowledge/principles')), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function upload(f: File) {
+    setBusy(true);
+    setMessage(null);
+    const form = new FormData();
+    form.append('file', f);
+    try {
+      const r = await api<{ id: number; item_count: number; warnings: string[] }>('/api/admin/knowledge/principles/upload', { body: form });
+      setMessage({ kind: 'success', text: `집행원리 ${r.item_count}건을 올려 바로 사용합니다. 이전 묶음은 아래 목록에 보관됩니다.`, warnings: r.warnings });
+      setOpenId(r.id);
+      await load();
+      onChanged();
+    } catch (err) {
+      setMessage({ kind: 'error', text: errorText(err, '업로드에 실패했습니다.') });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function act(fn: () => Promise<unknown>, done: string) {
+    setMessage(null);
+    try {
+      await fn();
+      setMessage({ kind: 'success', text: done });
+      await load();
+      onChanged();
+    } catch (err) {
+      setMessage({ kind: 'error', text: errorText(err, '처리하지 못했습니다.') });
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="card space-y-3 p-4">
+        <h3 className="font-bold text-slate-800 dark:text-slate-100">집행원리 올리기 (CSV)</h3>
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          그간 질의응답 사례에서 뽑은 일반 집행 기준입니다. 근거 순서는 <b>지침 및 FAQ → 집행원리 → 표준답안</b>이며, 질문마다 관련 집행원리를 찾아 AI에 <code>[집행원리]</code> 꼬리표로 함께 넘깁니다. 사용자 화면에는 번호를 보여주지 않습니다.
+        </p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          첫 줄 머리글: 번호 · 분야 · 재원 · 적용시기 · <b>집행원리</b>(필수) · 비고. 엑셀에서 ‘CSV(쉼표로 분리)’로 저장한 파일도 그대로 올리면 됩니다. 올리면 이전 묶음을 대신해 바로 쓰이고, 이전 묶음은 되돌릴 수 있게 보관됩니다.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <a className="btn-secondary" href="/api/admin/knowledge/principles/template">
+            <Download className="h-4 w-4" /> 양식 받기
+          </a>
+          <FilePicker accept=".csv" label="CSV 올리기" busy={busy} onFile={upload} />
+        </div>
+        {message && (
+          <Notice kind={message.kind}>
+            {message.text}
+            {!!message.warnings?.length && (
+              <ul className="mt-1 list-disc pl-5 text-xs">
+                {message.warnings.slice(0, 20).map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            )}
+          </Notice>
+        )}
+      </section>
+
+      <section className="card overflow-hidden">
+        <h3 className="border-b border-slate-200 p-4 font-bold text-slate-800 dark:border-slate-700 dark:text-slate-100">올린 묶음</h3>
+        {sets.length === 0 && <p className="p-6 text-center text-sm text-slate-400">아직 올린 집행원리가 없습니다.</p>}
+        <div className="divide-y divide-slate-100 dark:divide-slate-700">
+          {sets.map((st) => (
+            <div key={st.id} className="p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm text-slate-700 dark:text-slate-200">
+                  {st.status === 'active' && (
+                    <span className="mr-2 rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700 dark:bg-green-950 dark:text-green-300">사용 중</span>
+                  )}
+                  <b>{st.filename}</b> · {st.item_count}건
+                  <span className="ml-2 text-xs text-slate-400">
+                    {formatTime(st.created_at)} · {st.uploaded_by_name ?? '-'}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setOpenId(openId === st.id ? null : st.id)}>
+                    {openId === st.id ? '접기' : '내용 보기'}
+                  </button>
+                  {st.status !== 'active' && (
+                    <>
+                      <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => act(() => api(`/api/admin/knowledge/principles/sets/${st.id}/activate`, { body: {} }), '이 묶음을 사용합니다.')}>
+                        이 묶음 사용
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary px-2 py-1 text-xs"
+                        onClick={() => confirm(`'${st.filename}' 묶음을 삭제할까요?`) && act(() => api(`/api/admin/knowledge/principles/sets/${st.id}`, { method: 'DELETE' }), '삭제했습니다.')}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {openId === st.id && <PrincipleItems setId={st.id} />}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PrincipleItems({ setId }: { setId: number }) {
+  const [q, setQ] = useState('');
+  const [items, setItems] = useState<PrincipleItem[]>([]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      api<PrincipleItem[]>(`/api/admin/knowledge/principles/sets/${setId}/items?q=${encodeURIComponent(q)}`).then(setItems);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [setId, q]);
+  return (
+    <div className="mt-3 space-y-2">
+      <input className="input" placeholder="번호·분야·내용 검색" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-slate-50 text-left text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+            <tr>
+              <th className="px-2 py-1.5">번호</th>
+              <th className="px-2 py-1.5">분야</th>
+              <th className="px-2 py-1.5">재원</th>
+              <th className="px-2 py-1.5">적용시기</th>
+              <th className="px-2 py-1.5">집행원리</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+            {items.map((p) => (
+              <tr key={p.id} className="align-top text-slate-700 dark:text-slate-200">
+                <td className="whitespace-nowrap px-2 py-1.5 font-mono">{p.code}</td>
+                <td className="px-2 py-1.5">{p.category}</td>
+                <td className="px-2 py-1.5">{p.funding}</td>
+                <td className="whitespace-nowrap px-2 py-1.5">{p.period}</td>
+                <td className="px-2 py-1.5">
+                  {p.text}
+                  {p.note && <span className="block text-slate-400">비고: {p.note}</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {items.length === 0 && <p className="p-4 text-center text-xs text-slate-400">해당하는 집행원리가 없습니다.</p>}
+      </div>
+    </div>
   );
 }
