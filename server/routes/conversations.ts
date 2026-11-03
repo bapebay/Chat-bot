@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
 import { answerQuestion, listMessages, titleFromQuestion } from '../chat.js';
-import { BUSINESS_TYPES } from '../constants.js';
+import { BUSINESS_TYPES, DEFAULT_BUSINESS_TYPE } from '../constants.js';
 import type { DB } from '../db.js';
 import type { KnowledgeBase } from '../knowledge/index.js';
 import { maskPii } from '../knowledge/text.js';
@@ -55,7 +55,7 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
 
   app.post('/api/conversations', { preHandler: loggedIn }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
-    const businessType = str(b.business_type) || req.user.business_type;
+    const businessType = str(b.business_type) || DEFAULT_BUSINESS_TYPE;
     if (!(BUSINESS_TYPES as readonly string[]).includes(businessType)) {
       return reply.code(400).send({ error: '사업 유형을 선택해 주세요.' });
     }

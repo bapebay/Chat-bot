@@ -81,15 +81,15 @@ function addUser(u: Partial<Json>) {
     must_change_password: false,
     created_at: ago(60 * 24 * 20),
     last_login_at: ago(60),
-    business_type: '모름',
+    business_type: '순수앵커',
     ...u,
   };
   users.push(row);
   return row;
 }
 const admin = addUser({ username: 'admin', role: 'admin', org_type: '재단', org_name: '중앙앵커센터', region: '해당없음' });
-// 데모 사용자는 사업 유형 '모름'으로 질문하는 상태가 기본 (요청에 따라 고정)
-const user = addUser({ username: 'user', role: 'user', org_type: '대학', org_name: '가상대학교 산학협력단', region: '부산', business_type: '모름' });
+// 새 대화의 기본 사업 유형은 모든 사용자 '순수앵커' (요청에 따라 고정)
+const user = addUser({ username: 'user', role: 'user', org_type: '대학', org_name: '가상대학교 산학협력단', region: '부산', business_type: '순수앵커' });
 const others = [
   addUser({ username: 'center_daegu', role: 'user', org_type: '지역앵커센터', org_name: '대구 지역앵커센터(가상)', region: '대구' }),
   addUser({ username: 'univ_gw', role: 'user', org_type: '대학', org_name: '가상과학기술대학교', region: '강원', business_type: '순수앵커' }),
@@ -480,9 +480,9 @@ const titleOf = (q: string) => {
 {
   // 예시 사용 기록: 기본 표준답안의 대표 질의 몇 개 + 근거 없음·범위 외 예시
   const samples = [
-    ...PER_CATEGORY.slice(0, 6).map((q) => [q.question, '모름']),
-    ['사업단 워크숍 숙소 예약 방법은?', '모름'],
-    ['자체평가 실적으로 인정되나요?', '모름'],
+    ...PER_CATEGORY.slice(0, 6).map((q) => [q.question, '순수앵커']),
+    ['사업단 워크숍 숙소 예약 방법은?', '순수앵커'],
+    ['자체평가 실적으로 인정되나요?', '순수앵커'],
   ];
   const people = [user, ...others];
   for (let day = 13; day >= 0; day--) {
@@ -582,7 +582,7 @@ route('GET', '/api/conversations', 'user', ({ me, query }) => {
     .filter((c) => !q || c.title.includes(q) || messages.some((m) => m.conversation_id === c.id && m.content.includes(q)))
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
 });
-route('POST', '/api/conversations', 'user', ({ me, body }) => newConversation(me.id, body.business_type || me.business_type));
+route('POST', '/api/conversations', 'user', ({ me, body }) => newConversation(me.id, body.business_type || '순수앵커'));
 const ownConv = (me: Json, id: string) => {
   const c = byId(conversations, id);
   if (!c || c.user_id !== me.id) throw new HttpError(404, '대화를 찾을 수 없습니다.');
@@ -1148,11 +1148,11 @@ export function importState(st: Json): void {
   for (const [k, list] of Object.entries(LISTS) as [string, Json[]][]) {
     if (Array.isArray(st[k])) list.splice(0, list.length, ...st[k]);
   }
-  // 예전에 저장된 데이터에서도 데모 사용자의 기본 사업 유형은 '모름'
+  // 예전에 저장된 데이터에서도 데모 사용자의 기본 사업 유형은 '순수앵커'
   // 검수자 역할을 없앴다: 예전에 저장된 데모의 검수자 계정은 지운다 (권한은 관리자가 가짐)
   for (const u of users.filter((x) => x.role === 'reviewer')) users.splice(users.indexOf(u), 1);
   const demoUser = users.find((u) => u.username === 'user');
-  if (demoUser) demoUser.business_type = '모름';
+  if (demoUser) demoUser.business_type = '순수앵커';
 }
 
 // ================= 요청 처리 =================

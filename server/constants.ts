@@ -8,6 +8,8 @@ export const REGIONS = [
 ] as const;
 
 export const BUSINESS_TYPES = ['순수앵커', '글로컬', '의대교육', '초광역', '기타', '모름'] as const;
+/** 새 대화의 기본 사업 유형. 가입 때 고른 유형과 관계없이 모든 사용자에게 같다 (대화마다 바꿀 수는 있음) */
+export const DEFAULT_BUSINESS_TYPE = '순수앵커';
 
 export const ROLES = ['user', 'admin'] as const;
 export type Role = (typeof ROLES)[number];

@@ -66,7 +66,7 @@ test('가입 → 승인 전 로그인 불가 → 승인 후 질문·답변', asy
 
   const user = cookieOf(await login(app, 'univ01', 'userpass1'));
   const conv = (await app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: user }, payload: {} })).json();
-  assert.equal(conv.business_type, '글로컬');
+  assert.equal(conv.business_type, '순수앵커'); // 가입 때 '글로컬'을 골라도 새 대화는 모두 순수앵커로 시작
 
   const res = await app.inject({
     method: 'POST',

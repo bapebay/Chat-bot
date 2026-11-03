@@ -121,6 +121,9 @@ export interface SettingRevision {
   changed_by: string | null;
 }
 
+/** 새 대화의 기본 사업 유형 (모든 사용자 공통, 서버 constants.ts 와 같게) */
+export const DEFAULT_BUSINESS_TYPE = '순수앵커';
+
 export const ROLE_LABELS: Record<Role, string> = { user: '사용자', admin: '관리자' };
 
 export class ApiError extends Error {

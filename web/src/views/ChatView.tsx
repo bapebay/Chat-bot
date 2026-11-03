@@ -1,6 +1,6 @@
 import { AlertCircle, Bot, Loader2, Megaphone, PlusCircle, Search, Send, ShieldAlert, Sidebar, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type Usage, type User } from '../api';
+import { DEFAULT_BUSINESS_TYPE, api, ApiError, formatTime, type Conversation, type Message, type Meta, type Usage, type User } from '../api';
 import { InquiryModal } from '../components/InquiryModal';
 import { MessageList, type Feedback } from '../components/MessageList';
 import { Modal, Notice, Select } from '../components/ui';
@@ -11,7 +11,7 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   const [search, setSearch] = useState('');
   const [current, setCurrent] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [newBusinessType, setNewBusinessType] = useState(user.business_type);
+  const [newBusinessType, setNewBusinessType] = useState(DEFAULT_BUSINESS_TYPE);
   const [input, setInput] = useState('');
   const [pendingQuestion, setPendingQuestion] = useState('');
   const [error, setError] = useState('');
@@ -70,7 +70,7 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
     setMessages([]);
     setFeedback({});
     setError('');
-    setNewBusinessType(user.business_type);
+    setNewBusinessType(DEFAULT_BUSINESS_TYPE);
   }
 
   async function removeConversation(c: Conversation) {
