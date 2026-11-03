@@ -5,7 +5,7 @@ import { principleContext } from './knowledge/principles.js';
 import { qaSearchText, strength, TOP_K_PRINCIPLE, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
-import { BLOCKED_TEXT, detectInjection, LEAK_REASON, leaksInstructions } from './knowledge/guard.js';
+import { BLOCKED_TEXT, detectInjection, LEAK_REASON, leaksInstructions, publicRefs } from './knowledge/guard.js';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from './knowledge/split.js';
 export { looksLikeFollowUp };
 import type { ChatTurn, LlmClient } from './llm/index.js';
@@ -375,7 +375,8 @@ export async function generateAnswer(
 
   return {
     ...usage,
-    text: json.answer_markdown.trim(),
+    // 내부 꼬리표(G1·P1)는 사용자용 말로 바꿔 보여 준다
+    text: publicRefs(json.answer_markdown.trim(), result.guideline.map((h) => h.doc.doc_kind)),
     answerType,
     citations: {
       ...base,

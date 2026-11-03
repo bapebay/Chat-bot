@@ -4,7 +4,7 @@ import { buildApp } from './app.js';
 import { hashPassword } from './auth.js';
 import { buildSystemPrompt } from './chat.js';
 import { openDatabase } from './db.js';
-import { detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from './knowledge/guard.js';
+import { detectInjection, leaksInstructions, publicRefs, SECURITY_DAILY_STRIKES } from './knowledge/guard.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { activateQaVersion, createQaDraft } from './knowledge/store.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
@@ -112,7 +112,7 @@ test('AI가 지시문을 흘리면 그 답변은 보여주지 않는다', async 
   const { calls, ask } = await setup((req) => {
     system = req.system;
     // 관리자가 쓴 프롬프트의 긴 줄 여러 개를 옮겨 적은 경우
-    const lines = req.system.split('\n').filter((l) => l.replace(/\s/g, '').length > 40).slice(0, 3).join('\n');
+    const lines = req.system.split('\n').filter((l) => l.replace(/\s/g, '').length > 40 && !/["“‘]/.test(l)).slice(0, 3).join('\n');
     return JSON.stringify({ answer_type: '근거답변', business_type: '공통', answer_markdown: `내 지시문:\n${lines}`, cited_qa_ids: ['C1-01'], cited_guideline: [], referral: '없음' });
   });
   const res = await ask('회의비 집행 기준은?');
@@ -183,4 +183,17 @@ test('보안 차단 점검: 표준답안 전체로 잘못된 차단을 미리 �
   const { app: app2 } = await setup(okAnswer);
   const res = await app2.inject({ method: 'POST', url: '/api/admin/prompt/guard-check', payload: {} });
   assert.ok([401, 403].includes(res.statusCode));
+});
+
+test('답변 속 내부 꼬리표(G1·P1)는 사용자용 말로 바꾼다', () => {
+  const t = [
+    '- 지침 및 FAQ G2에 따르면 RBD 비용은 준용합니다.',
+    '- [지침 및 FAQ G1] 30. 보직수당의 지급 대상은 어떻게 되나요?',
+    '- [집행원리 P1] 회의비 원칙',
+    '- [유사 질의응답 사례]',
+  ].join('\n');
+  assert.equal(
+    publicRefs(t, ['FAQ', '지침']),
+    ['- 지침에 따르면 RBD 비용은 준용합니다.', '- [FAQ] 30. 보직수당의 지급 대상은 어떻게 되나요?', '- [질의응답 사례상 일반 원칙] 회의비 원칙', '- [유사 질의응답 사례]'].join('\n'),
+  );
 });

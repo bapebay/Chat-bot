@@ -137,3 +137,21 @@ export function guardCheck(items: { qa_id: string; question: string; answer: str
   }
   return result;
 }
+
+/**
+ * 답변에 섞여 나온 내부 꼬리표를 사용자용 말로 바꾼다.
+ * AI에 근거를 넘길 때 붙이는 'G1', 'P2' 같은 번호는 챗봇 안에서만 쓰는 것이라 사용자에게는 뜻이 없고 내부 형식을 드러낸다.
+ * - '[지침 및 FAQ G2]', '지침 및 FAQ G2에 따르면' → 그 조항 문서의 종류('[지침]', 'FAQ에 따르면')
+ * - '[집행원리 P1]' → '[질의응답 사례상 일반 원칙]'
+ * guideKinds: AI에 넘긴 지침 조항 순서대로 문서 종류('지침' 또는 'FAQ')
+ */
+export function publicRefs(text: string, guideKinds: string[]): string {
+  return text
+    .replace(/(\[\s*)?지침\s*및\s*FAQ\s*G(\d{1,2})(\s*\])?/g, (_m, open: string | undefined, n: string, close: string | undefined) => {
+      const kind = guideKinds[Number(n) - 1] ?? '지침';
+      return open && close ? `[${kind}]` : `${open ? '[' : ''}${kind}${close ? ']' : ''}`;
+    })
+    .replace(/(\[\s*)?집행원리\s*P\d{1,2}(\s*\])?/g, (_m, open: string | undefined, close: string | undefined) =>
+      open && close ? '[질의응답 사례상 일반 원칙]' : `${open ? '[' : ''}질의응답 사례상 일반 원칙${close ? ']' : ''}`,
+    );
+}
