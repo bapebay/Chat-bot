@@ -6,9 +6,11 @@ import { hashPassword } from './auth.js';
 import { openDatabase } from './db.js';
 import type { Embedder } from './knowledge/embedder.js';
 import { chunkDocument, chunkMarkdown, chunkTextFile } from './knowledge/guideline.js';
+import { parseQaWorkbook } from './knowledge/excel.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { findPii, maskPii } from './knowledge/text.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
+import { parseQaMarkdown } from './knowledge/qa-markdown.js';
 
 // ----- 시험용 표준 Q&A 엑셀 (가상 데이터) -----
 async function sampleQaXlsx(): Promise<Buffer> {
@@ -258,4 +260,84 @@ test('마크다운 지침: # 제목·조문 머리로 나누고, 표·꾸밈 기
   // 한글 윈도 기본 저장(CP949) TXT도 읽는다
   const cp949 = Buffer.from([0xc1, 0xa6, 0x31, 0xc1, 0xb6, 0x28, 0xb8, 0xf1, 0xc0, 0xfb, 0x29]); // 제1조(목적)
   assert.equal(chunkTextFile(cp949, 'a.txt')[0].clause, '제1조(목적)');
+});
+
+test('표준 Q&A MD: 엑셀과 같은 머리글의 표를 읽는다 (<br> 줄바꿈, 통합질의 표 우선, 경고 규칙 동일)', () => {
+  const md = [
+    '# 안내',
+    '| 통합번호 | 비고 |',
+    '| --- | --- |',
+    '| X | 무시되는 표 |',
+    '',
+    '## 통합질의',
+    '| 통합번호 | 대분류 | 중분류 | 대표 질의 | 요지 체크리스트 | 통합 답안 | 연결형 답변 | 검수상태 |',
+    '|---|---|---|---|---|---|---|:---:|',
+    '| B4-01 | 순수앵커 | 수당 | 과제책임자 **수당** 지급 가능? | 책임자 수당 | 불가합니다.<br>근거: 지침 제5조 | | 확정 |',
+    '| B4-02 | 공통 | 회의비 | 회의비로 주류 구입 \\| 가능? | | 연락은 010-1234-5678 | Y | 미검수 |',
+    '| B4-03 | 공통 | 회의비 | 빈 답안 |  |  |  | 확정 |',
+  ].join('\n');
+  const { items, warnings } = parseQaMarkdown(Buffer.from(md, 'utf8'));
+  assert.deepEqual(items.map((i) => i.qa_id), ['B4-01', 'B4-02']);
+  assert.equal(items[0].question, '과제책임자 수당 지급 가능?');
+  assert.equal(items[0].answer, '불가합니다.\n근거: 지침 제5조');
+  assert.equal(items[0].category1, '순수앵커');
+  assert.equal(items[0].review_status, '확정');
+  assert.equal(items[1].question, '회의비로 주류 구입 | 가능?');
+  assert.equal(items[1].is_referral, 1);
+  assert.ok(warnings.some((w) => /전화번호/.test(w.message)));
+  assert.ok(warnings.some((w) => w.qa_id === 'B4-03' && /빈 칸/.test(w.message)));
+});
+
+test('표준 Q&A MD: 답안마다 제목 + 항목 줄 (여러 줄 답안, 소제목, 제목 속 번호·질의)', () => {
+  const md = [
+    '# 인건비 (단원 제목은 건너뜀)',
+    '## B4-01',
+    '- **대분류**: 순수앵커',
+    '- 대표 질의: 과제책임자에게 수당을 줄 수 있나요?',
+    '- 통합 답안: 불가합니다.',
+    '  - 다만 다른 과제 수당은 지침에 따릅니다.',
+    '- 검수상태: 확정',
+    '',
+    '## [B4-02] 연구장비 사후 심의 가능?',
+    '대분류: 공통',
+    '### 통합 답안',
+    '사후 심의는 불가합니다.',
+    '',
+    '발주 전 심의가 필요합니다.',
+    '### 연결형 답변',
+    '지역앵커센터에 문의하시기 바랍니다.',
+    '---',
+    '통합번호: B4-03',
+    '대표 질의: 회의비 주류?',
+    '통합 답안: 불가',
+  ].join('\n');
+  const { items } = parseQaMarkdown(Buffer.from(md, 'utf8'));
+  assert.deepEqual(items.map((i) => i.qa_id), ['B4-01', 'B4-02', 'B4-03']);
+  assert.equal(items[0].answer, '불가합니다.\n- 다만 다른 과제 수당은 지침에 따릅니다.');
+  assert.equal(items[0].review_status, '확정');
+  assert.equal(items[1].question, '연구장비 사후 심의 가능?');
+  assert.equal(items[1].answer, '사후 심의는 불가합니다.\n\n발주 전 심의가 필요합니다.');
+  assert.equal(items[1].is_referral, 1);
+  assert.equal(items[1].referral_answer, '지역앵커센터에 문의하시기 바랍니다.');
+  assert.equal(items[2].question, '회의비 주류?');
+  assert.throws(() => parseQaMarkdown(Buffer.from('# 제목만\n본문', 'utf8')), /MD 파일에서 표준답안을 찾지 못했습니다/);
+});
+
+test('표준 Q&A MD 업로드: 엑셀과 같은 미리보기 → 적용 흐름', async () => {
+  const { app, cookie, kb } = await setup();
+  const md = '| 통합번호 | 대분류 | 대표 질의 | 통합 답안 | 검수상태 |\n|---|---|---|---|---|\n| M-01 | 공통 | 마크다운 수당 질문 | 마크다운 답 | 확정 |\n';
+  const m = multipart('표준답안.md', Buffer.from(md, 'utf8'));
+  const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', headers: { cookie, ...m.headers }, payload: m.payload });
+  assert.equal(up.statusCode, 200, up.body);
+  assert.equal(up.json().status, 'draft');
+  assert.equal(up.json().item_count, 1);
+  await app.inject({ method: 'POST', url: `/api/admin/knowledge/qa/versions/${up.json().id}/activate`, headers: { cookie } });
+  assert.equal((await kb.search('마크다운 수당 질문', '모름')).qa[0].doc.qa_id, 'M-01');
+  // 엑셀 내용을 MD 표로 옮겨 올리면 엑셀 원본과 같은 결과
+  const fromXlsx = await parseQaWorkbook(await sampleQaXlsx());
+  const head = '| 통합번호 | 대분류(사업 유형) | 중분류 | 소분류 | 대표 질의 | 요지 체크리스트 | 통합 답안 | 연결형 답변 | 검수 상태 |\n|---|---|---|---|---|---|---|---|---|';
+  const body = fromXlsx.items.map((i) => `| ${[i.qa_id, i.category1, i.category2, i.category3, i.question, i.checklist, i.answer, i.is_referral ? 'Y' : 'N', i.review_status].join(' | ')} |`);
+  const fromMd = parseQaMarkdown(Buffer.from([head, ...body].join('\n'), 'utf8'));
+  const strip = (x: { row: number }[]) => x.map(({ row: _r, ...rest }) => rest);
+  assert.deepEqual(strip(fromMd.items), strip(fromXlsx.items));
 });

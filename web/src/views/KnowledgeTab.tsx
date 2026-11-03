@@ -94,7 +94,7 @@ export function KnowledgeTab() {
   }, [loadStatus]);
 
   const sections: { key: Section; label: string }[] = [
-    { key: 'qa', label: '표준 Q&A 엑셀' },
+    { key: 'qa', label: '표준 Q&A 올리기' },
     { key: 'qa-edit', label: '표준답안 관리' },
     { key: 'guideline', label: '지침·FAQ 원문' },
     { key: 'principle', label: '집행원리' },
@@ -204,18 +204,22 @@ function QaSection({ onChanged }: { onChanged: () => void }) {
     <div className="space-y-4">
       <section className="card space-y-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold text-slate-800 dark:text-slate-100">표준 Q&A 엑셀 업로드</h3>
+          <h3 className="font-bold text-slate-800 dark:text-slate-100">표준 Q&A 업로드 (엑셀·MD)</h3>
           <div className="flex gap-2">
             <a className="btn-secondary" href="/api/admin/knowledge/qa/template">
               <Download className="h-4 w-4" /> 양식 받기
             </a>
-            <FilePicker accept=".xlsx" label="엑셀 올리기" busy={busy} onFile={upload} />
+            <FilePicker accept=".xlsx,.md,.markdown" label="엑셀·MD 올리기" busy={busy} onFile={upload} />
           </div>
         </div>
         <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-500 dark:text-slate-400">
           <li>‘통합질의’ 시트를 읽습니다. 머리글: 통합번호 · 대분류 · 중분류 · 소분류 · 대표 질의 · 요지 체크리스트 · 통합 답안 · 연결형 답변 · 검수상태 (· 답변 변경 이력)</li>
+          <li>
+            MD(마크다운) 파일도 올릴 수 있습니다. ① 엑셀과 같은 머리글의 표로 쓰거나, ② 답안마다 ‘## 통합번호’ 제목 아래 ‘- 대표 질의: …’, ‘- 통합 답안: …’ 줄로 씁니다(여러 줄 답안은
+            다음 줄에 이어 쓰거나 ‘### 통합 답안’ 소제목 아래에 씀). 머리글 이름·검수상태·경고 규칙은 엑셀과 같습니다.
+          </li>
           <li>올리면 먼저 ‘미리보기’로 저장됩니다. 건수·경고를 확인한 뒤 [서비스에 적용]을 눌러야 챗봇에 반영됩니다.</li>
-          <li>검수상태가 ‘확정’인 행만 씁니다. 미검수 사용 여부는 ‘검색 설정·시험’에서 바꿀 수 있습니다.</li>
+          <li>검수상태가 ‘확정’인 행만 씁니다. 미검수 사용 여부는 ‘검색 설정’에서 바꿀 수 있습니다.</li>
           <li>개인정보는 비식별 처리된 데이터만 올려 주세요. 전화번호·이메일 등이 보이면 경고합니다.</li>
         </ul>
         {message && <Notice kind={message.kind}>{message.text}</Notice>}

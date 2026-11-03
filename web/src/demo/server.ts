@@ -8,6 +8,7 @@ import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/acco
 import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
+import { isQaMarkdown, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
 import { parsePrinciplesCsv } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, chunkTextFile, extractPdfPages } from '../../../server/knowledge/guideline';
@@ -973,10 +974,10 @@ const asBuffer = (b: ArrayBuffer) => b as unknown as Parameters<typeof parseQaWo
 const bad = (e: unknown) => new HttpError(400, (e as Error).message);
 
 route('POST', '/api/admin/knowledge/qa/upload', 'admin', async ({ body }) => {
-  const f = await readFile(body, /\.xlsx$/i);
+  const f = await readFile(body, /\.(xlsx|md|markdown)$/i);
   let parsed;
   try {
-    parsed = await parseQaWorkbook(asBuffer(f.buf));
+    parsed = isQaMarkdown(f.name) ? parseQaMarkdown(new Uint8Array(f.buf)) : await parseQaWorkbook(asBuffer(f.buf));
   } catch (e) {
     throw bad(e);
   }

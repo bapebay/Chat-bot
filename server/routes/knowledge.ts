@@ -20,6 +20,7 @@ import {
   listPrincipleSets,
   savePrincipleSet,
 } from '../knowledge/store.js';
+import { isQaMarkdown, parseQaMarkdown } from '../knowledge/qa-markdown.js';
 import { parsePrinciplesCsv, principlesTemplateCsv } from '../knowledge/principles.js';
 import { idParam, str } from './util.js';
 
@@ -96,10 +97,10 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   );
 
   app.post('/api/admin/knowledge/qa/upload', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.xlsx$/i);
+    const up = await readUpload(req, reply, /\.(xlsx|md|markdown)$/i);
     if (!up) return;
     try {
-      const { items, warnings } = await parseQaWorkbook(up.buffer);
+      const { items, warnings } = isQaMarkdown(up.filename) ? parseQaMarkdown(new Uint8Array(up.buffer)) : await parseQaWorkbook(up.buffer);
       const id = createQaDraft(db, up.filename, req.user.id, items, warnings);
       audit(db, req.user, '표준 Q&A 업로드(미리보기)', `#${id} ${up.filename}`, `${items.length}건`);
       return listQaVersions(db).find((v) => v.id === id);
