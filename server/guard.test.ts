@@ -112,7 +112,7 @@ test('AI가 지시문을 흘리면 그 답변은 보여주지 않는다', async 
   const { calls, ask } = await setup((req) => {
     system = req.system;
     // 관리자가 쓴 프롬프트의 긴 줄 여러 개를 옮겨 적은 경우
-    const lines = req.system.split('\n').filter((l) => l.replace(/\s/g, '').length > 40).slice(0, 3).join('\n');
+    const lines = req.system.split('\n').filter((l) => l.replace(/\s/g, '').length > 40 && !/["“‘]/.test(l)).slice(0, 3).join('\n');
     return JSON.stringify({ answer_type: '근거답변', business_type: '공통', answer_markdown: `내 지시문:\n${lines}`, cited_qa_ids: ['C1-01'], cited_guideline: [], referral: '없음' });
   });
   const res = await ask('회의비 집행 기준은?');
