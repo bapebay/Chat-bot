@@ -1,4 +1,4 @@
-export type Role = 'user' | 'reviewer' | 'admin';
+export type Role = 'user' | 'admin';
 
 export interface User {
   id: number;
@@ -123,7 +123,7 @@ export interface SettingRevision {
   changed_by: string | null;
 }
 
-export const ROLE_LABELS: Record<Role, string> = { user: '사용자', reviewer: '검수자', admin: '관리자' };
+export const ROLE_LABELS: Record<Role, string> = { user: '사용자', admin: '관리자' };
 
 export class ApiError extends Error {
   constructor(

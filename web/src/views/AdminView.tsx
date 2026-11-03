@@ -258,7 +258,7 @@ function UsersTab({
           </table>
         </div>
         <p className="border-t border-slate-200 p-3 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          권한: <b>사용자</b>(질문) · <b>검수자</b>(1:1 문의 답변, 이후 단계에서 표준답안 검수) · <b>관리자</b>(전체)
+          권한: <b>사용자</b>(질문, 재단에 문의) · <b>관리자</b>(문의 답변, 검토 대기함·표준답안 검수, 지식 데이터·평가·운영 전체)
         </p>
       </section>
 

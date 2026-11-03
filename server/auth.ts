@@ -109,7 +109,7 @@ declare module 'fastify' {
   }
 }
 
-const ROLE_LEVEL: Record<Role, number> = { user: 1, reviewer: 2, admin: 3 };
+const ROLE_LEVEL: Record<Role, number> = { user: 1, admin: 3 };
 
 /**
  * 로그인과 권한을 서버에서 다시 확인하는 preHandler.

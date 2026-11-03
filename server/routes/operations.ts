@@ -45,7 +45,7 @@ function activeVersionId(db: DB): number | null {
 
 export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase) {
   const loggedIn = requireRole(db, 'user');
-  const reviewer = requireRole(db, 'reviewer');
+  const admin = requireRole(db, 'admin');
 
   // ================= 답변 평가 (Good / Bad) =================
   app.put('/api/messages/:id/feedback', { preHandler: loggedIn }, async (req, reply) => {
@@ -98,7 +98,7 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
   });
 
   // ================= 검토 대기함 =================
-  app.get('/api/review/queue', { preHandler: reviewer }, async (req) => {
+  app.get('/api/review/queue', { preHandler: admin }, async (req) => {
     const q = req.query as Record<string, unknown>;
     const status = str(q.status) === 'done' ? 'done' : 'pending';
     const rows = db
@@ -130,7 +130,7 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
     });
   });
 
-  app.post('/api/review/queue/:id/resolve', { preHandler: reviewer }, async (req, reply) => {
+  app.post('/api/review/queue/:id/resolve', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const b = (req.body ?? {}) as Record<string, unknown>;
     const action = str(b.action);
@@ -145,7 +145,7 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
   });
 
   // ================= 표준답안 편집기 (서비스 중인 버전을 직접 수정) =================
-  app.get('/api/review/qa', { preHandler: reviewer }, async (req) => {
+  app.get('/api/review/qa', { preHandler: admin }, async (req) => {
     const vid = activeVersionId(db);
     if (!vid) return { version_id: null, items: [] };
     const q = req.query as Record<string, unknown>;
@@ -175,14 +175,14 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
     return { version_id: vid, total, items };
   });
 
-  app.get('/api/review/qa/facets', { preHandler: reviewer }, async () => {
+  app.get('/api/review/qa/facets', { preHandler: admin }, async () => {
     const vid = activeVersionId(db) ?? 0;
     const distinct = (col: string) =>
       (db.prepare(`SELECT DISTINCT ${col} AS v FROM qa_items WHERE version_id = ? AND ${col} != '' ORDER BY ${col}`).all(vid) as { v: string }[]).map((r) => r.v);
     return { category1: distinct('category1'), category2: distinct('category2'), review_status: distinct('review_status') };
   });
 
-  app.get('/api/review/qa/:qaId/revisions', { preHandler: reviewer }, async (req) =>
+  app.get('/api/review/qa/:qaId/revisions', { preHandler: admin }, async (req) =>
     db
       .prepare(
         `SELECT r.id, r.before_json, r.after_json, r.reason, r.created_at, u.username AS changed_by
@@ -200,7 +200,7 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
   const snapshot = (r: Partial<QaRow>) =>
     JSON.stringify(Object.fromEntries([...QA_FIELDS, 'is_referral'].map((f) => [f, (r as Record<string, unknown>)[f]])));
 
-  app.put('/api/review/qa/:id', { preHandler: reviewer }, async (req, reply) => {
+  app.put('/api/review/qa/:id', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const vid = activeVersionId(db);
     const before = db.prepare('SELECT * FROM qa_items WHERE id = ? AND version_id = ?').get(id, vid) as QaRow | undefined;
@@ -230,7 +230,7 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
     return db.prepare('SELECT * FROM qa_items WHERE id = ?').get(id);
   });
 
-  app.post('/api/review/qa', { preHandler: reviewer }, async (req, reply) => {
+  app.post('/api/review/qa', { preHandler: admin }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const v = readQaBody(b);
     if (!v.value) return reply.code(400).send({ error: v.error });
@@ -265,7 +265,7 @@ export function operationsRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase
     return db.prepare('SELECT * FROM qa_items WHERE id = ?').get(info.lastInsertRowid);
   });
 
-  app.delete('/api/review/qa/:id', { preHandler: reviewer }, async (req, reply) => {
+  app.delete('/api/review/qa/:id', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const vid = activeVersionId(db);
     const before = db.prepare('SELECT * FROM qa_items WHERE id = ? AND version_id = ?').get(id, vid) as QaRow | undefined;

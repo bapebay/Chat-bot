@@ -13,7 +13,7 @@ const SELECT_INQUIRY = `
 
 export function inquiryRoutes(app: FastifyInstance, db: DB) {
   const loggedIn = requireRole(db, 'user');
-  const reviewer = requireRole(db, 'reviewer');
+  const admin = requireRole(db, 'admin');
 
   // 내 문의 목록. 목록을 열면 새 답변은 읽은 것으로 바꾼다 (이번 응답의 user_unread 로 '새 답변' 표시)
   app.get('/api/inquiries', { preHandler: loggedIn }, async (req) => {
@@ -51,8 +51,8 @@ export function inquiryRoutes(app: FastifyInstance, db: DB) {
     return db.prepare(`${SELECT_INQUIRY} WHERE i.id = ?`).get(info.lastInsertRowid);
   });
 
-  // 검수자·관리자: 전체 문의
-  app.get('/api/manage/inquiries', { preHandler: reviewer }, async (req) => {
+  // 관리자: 전체 문의
+  app.get('/api/manage/inquiries', { preHandler: admin }, async (req) => {
     const status = str((req.query as Record<string, unknown>).status);
     if (status === 'pending' || status === 'answered') {
       return db.prepare(`${SELECT_INQUIRY} WHERE i.status = ? ORDER BY i.id DESC`).all(status);
@@ -60,7 +60,7 @@ export function inquiryRoutes(app: FastifyInstance, db: DB) {
     return db.prepare(`${SELECT_INQUIRY} ORDER BY i.id DESC`).all();
   });
 
-  app.post('/api/manage/inquiries/:id/answer', { preHandler: reviewer }, async (req, reply) => {
+  app.post('/api/manage/inquiries/:id/answer', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id);
     const answer = str(((req.body ?? {}) as Record<string, unknown>).answer);
     if (!answer) return reply.code(400).send({ error: '답변 내용을 입력해 주세요.' });
@@ -74,7 +74,7 @@ export function inquiryRoutes(app: FastifyInstance, db: DB) {
   });
 
   // 문의 답변을 표준답안으로 등록했다고 표시 (표준답안 저장은 /api/review/qa 가 한다)
-  app.post('/api/manage/inquiries/:id/qa', { preHandler: reviewer }, async (req, reply) => {
+  app.post('/api/manage/inquiries/:id/qa', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id);
     const qaId = str(((req.body ?? {}) as Record<string, unknown>).qa_id);
     if (!qaId) return reply.code(400).send({ error: '통합번호가 없습니다.' });

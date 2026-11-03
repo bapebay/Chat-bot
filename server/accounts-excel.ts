@@ -13,7 +13,7 @@ export interface AccountInput {
   role: string;
 }
 
-const ROLE_WORDS: Record<string, Role> = { 사용자: 'user', 검수자: 'reviewer', 관리자: 'admin', user: 'user', reviewer: 'reviewer', admin: 'admin' };
+const ROLE_WORDS: Record<string, Role> = { 사용자: 'user', 관리자: 'admin', user: 'user', admin: 'admin' };
 
 /** 아이디·소속·지역·사업 유형·권한 형식 확인 (중복 확인은 accounts.ts). 문제가 없으면 null */
 export function accountFieldProblem(a: AccountInput): string | null {
@@ -89,7 +89,7 @@ export async function buildAccountsTemplate(): Promise<Buffer> {
     `소속 구분: ${ORG_TYPES.join(' / ')}`,
     `지역: ${REGIONS.join(' / ')}`,
     `사업 유형: ${BUSINESS_TYPES.join(' / ')} (비우면 모름)`,
-    '권한: 사용자 / 검수자 / 관리자 (비우면 사용자)',
+    '권한: 사용자 / 관리자 (비우면 사용자)',
     '‘(예시)’로 시작하는 행은 읽지 않습니다. 한 번에 500명까지 올릴 수 있습니다.',
     '등록하면 계정마다 임시 비밀번호가 나옵니다. 첫 로그인 때 비밀번호를 바꿔야 합니다.',
   ].forEach((t) => help.addRow([t]));

@@ -158,14 +158,13 @@ function SignupForm({ meta, onDone }: { meta: Meta; onDone: (msg: string) => voi
 function DemoLogin({ onLogin }: { onLogin: (u: User) => void }) {
   const roles = [
     { username: 'user', label: '사용자', desc: '대학 담당자로 질문하기 (사업 유형: 모름)' },
-    { username: 'reviewer', label: '검수자', desc: '검토 대기함·표준답안 고치기' },
-    { username: 'admin', label: '관리자', desc: '데이터·평가·통계 둘러보기' },
+    { username: 'admin', label: '관리자', desc: '문의 답변·검수·데이터·평가·통계' },
   ];
   return (
     <div className="mb-6 space-y-2 rounded-xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-900 dark:bg-indigo-950/40">
       <p className="text-sm font-bold text-indigo-900 dark:text-indigo-200">데모 페이지 · 가상 데이터와 테스트 모델로 동작합니다</p>
       <p className="text-xs text-indigo-800 dark:text-indigo-300">역할을 골라 바로 들어가 보세요. claude.ai에서 열면 올린 데이터가 자동 저장됩니다.</p>
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2">
         {roles.map((r) => (
           <button
             key={r.username}
@@ -181,7 +180,7 @@ function DemoLogin({ onLogin }: { onLogin: (u: User) => void }) {
           </button>
         ))}
       </div>
-      <p className="text-[11px] text-indigo-700 dark:text-indigo-300">직접 입력할 때: 아이디 user / reviewer / admin, 비밀번호 demo1234</p>
+      <p className="text-[11px] text-indigo-700 dark:text-indigo-300">직접 입력할 때: 아이디 user / admin, 비밀번호 demo1234</p>
     </div>
   );
 }

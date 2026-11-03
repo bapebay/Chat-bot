@@ -100,7 +100,8 @@ test('계정 일괄 등록: 양식대로 올리면 만들고, 잘못된 행은 �
   await wb.xlsx.load(tpl.rawPayload as unknown as ArrayBuffer);
   const s = wb.getWorksheet('계정')!;
   s.addRow(['busan_u01', '대학', '나대학교', '부산', '', '']);
-  s.addRow(['center_bs', '지역앵커센터', '부산 지역앵커센터', '부산', '모름', '검수자']);
+  s.addRow(['center_bs', '지역앵커센터', '부산 지역앵커센터', '부산', '모름', '관리자']);
+  s.addRow(['old_rev', '재단', '중앙앵커센터', '해당없음', '', '검수자']); // 없어진 역할
   s.addRow(['busan_u01', '대학', '중복', '부산', '', '']);
   s.addRow(['bad_region', '대학', '다대학교', '화성', '', '']);
   s.addRow(['univ01', '대학', '이미 있음', '부산', '', '']);
@@ -110,12 +111,13 @@ test('계정 일괄 등록: 양식대로 올리면 만들고, 잘못된 행은 �
   assert.equal(res.statusCode, 200);
   const body = res.json();
   assert.equal(body.created, 2);
-  assert.equal(body.failed, 3);
-  assert.match(body.results.find((r: { row: number }) => r.row === 5).error, /같은 아이디/);
+  assert.equal(body.failed, 4);
+  assert.match(body.results.find((r: { username: string }) => r.username === 'old_rev').error, /권한/);
+  assert.match(body.results.find((r: { row: number }) => r.row === 6).error, /같은 아이디/);
   assert.match(body.results.find((r: { username: string }) => r.username === 'bad_region').error, /지역/);
   assert.match(body.results.find((r: { username: string }) => r.username === 'univ01').error, /이미/);
   const center = db.prepare(`SELECT role, status, must_change_password FROM users WHERE username = 'center_bs'`).get() as Record<string, unknown>;
-  assert.deepEqual(center, { role: 'reviewer', status: 'approved', must_change_password: 1 });
+  assert.deepEqual(center, { role: 'admin', status: 'approved', must_change_password: 1 });
   // 만든 계정은 임시 비밀번호로 로그인된다
   const pw = body.results.find((r: { username: string }) => r.username === 'busan_u01').temp_password;
   assert.equal((await app.inject({ method: 'POST', url: '/api/auth/login', payload: { username: 'busan_u01', password: pw } })).statusCode, 200);

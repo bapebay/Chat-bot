@@ -138,7 +138,7 @@ test('AI 호출 실패 시 502, 질문은 저장되지 않음', async () => {
   assert.equal(detail.messages.length, 0);
 });
 
-test('1:1 문의에 대화 기록 자동 첨부, 검수자 답변', async () => {
+test('1:1 문의에 대화 기록 자동 첨부, 관리자 답변', async () => {
   const { app, db } = await setup();
   await app.inject({ method: 'POST', url: '/api/auth/signup', payload: signup });
   db.prepare(`UPDATE users SET status = 'approved' WHERE username = 'univ01'`).run();
