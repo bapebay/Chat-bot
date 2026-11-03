@@ -221,9 +221,9 @@ function AssistantMessage({
         <div className="mt-1 flex flex-wrap items-center gap-3 px-1 text-xs text-slate-400">
           {onFeedback && <FeedbackButtons current={feedback} onSubmit={(f) => onFeedback(m.id, f)} />}
           {!c?.security && <CopyButton text={copyText(body, c, disclaimer)} />}
-          {onAskStaff && (
-            <button type="button" onClick={onAskStaff} className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-300">
-              <MessageSquareQuote className="h-3.5 w-3.5" /> 담당자에게 문의
+          {onAskStaff && !c?.security && (
+            <button type="button" onClick={onAskStaff} className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-300" title="이 답변으로 해결되지 않으면 대화 기록을 첨부해 재단에 문의합니다">
+              <MessageSquareQuote className="h-3.5 w-3.5" /> 재단에 문의하기
             </button>
           )}
           {showUsage && (
@@ -277,7 +277,7 @@ function ReferralBox({
       )}
       {onAskStaff && (
         <button type="button" onClick={onAskStaff} className="btn-primary mt-2.5 px-3 py-1.5 text-xs">
-          <MessageSquareQuote className="h-3.5 w-3.5" /> 담당자에게 문의 (대화 자동 첨부)
+          <MessageSquareQuote className="h-3.5 w-3.5" /> 재단에 문의하기 (대화 자동 첨부)
         </button>
       )}
     </div>

@@ -33,17 +33,18 @@ export function inquiryRoutes(app: FastifyInstance, db: DB) {
     if (!content) return reply.code(400).send({ error: '문의 내용을 입력해 주세요.' });
     if (content.length > 5000) return reply.code(400).send({ error: '문의 내용은 5,000자 이내로 입력해 주세요.' });
 
-    let conversationId: number | null = null;
-    let transcript: string | null = null;
-    if (b.conversation_id != null) {
-      conversationId = idParam(b.conversation_id);
-      const conv = conversationId
-        ? db.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, req.user.id)
-        : undefined;
-      if (!conv) return reply.code(400).send({ error: '첨부할 대화를 찾을 수 없습니다.' });
-      // 대화가 나중에 지워져도 문의 내용은 남도록 문의 시점의 기록을 복사해 둔다
-      transcript = formatTranscript(listMessages(db, conversationId!));
+    // 1:1 문의는 챗봇에 먼저 물어본 뒤 그 대화에서만 남길 수 있다 (챗봇을 거치지 않은 바로 문의 방지)
+    const conversationId = idParam(b.conversation_id);
+    const conv = conversationId
+      ? db.prepare('SELECT id FROM conversations WHERE id = ? AND user_id = ?').get(conversationId, req.user.id)
+      : undefined;
+    if (!conv) return reply.code(400).send({ error: '첨부할 대화를 찾을 수 없습니다.', code: 'CHAT_FIRST' });
+    const answered = db.prepare(`SELECT 1 FROM messages WHERE conversation_id = ? AND role = 'assistant' LIMIT 1`).get(conversationId);
+    if (!answered) {
+      return reply.code(400).send({ error: "재단 문의는 챗봇에 먼저 질문한 뒤, 답변 아래 '재단에 문의하기'로 남길 수 있습니다.", code: 'CHAT_FIRST' });
     }
+    // 대화가 나중에 지워져도 문의 내용은 남도록 문의 시점의 기록을 복사해 둔다
+    const transcript = formatTranscript(listMessages(db, conversationId!));
     const info = db
       .prepare('INSERT INTO inquiries (user_id, conversation_id, attached_transcript, content) VALUES (?, ?, ?, ?)')
       .run(req.user.id, conversationId, transcript, content);

@@ -262,7 +262,7 @@ function generateAnswer(history: Json[], businessType: string, question: string)
   }
   if (!r.passed) {
     return {
-      text: '**답변 요약**: 등록된 지침과 표준답안에서 이 질문의 근거를 찾지 못했습니다.\n\n추측으로 안내하지 않기 위해 답변을 드리지 않습니다. 질문을 조금 더 구체적으로(사업 유형, 비목, 상황) 바꿔 다시 물어보시거나, 아래 **담당자에게 문의**로 남겨 주시면 담당자가 확인합니다.',
+      text: '**답변 요약**: 등록된 지침과 표준답안에서 이 질문의 근거를 찾지 못했습니다.\n\n추측으로 안내하지 않기 위해 답변을 드리지 않습니다. 질문을 조금 더 구체적으로(사업 유형, 비목, 상황) 바꿔 다시 물어보시거나, 아래 **재단에 문의하기**로 남겨 주시면 담당자가 확인합니다.',
       answerType: '근거없음',
       citations: { ...base, referral: '담당자' },
       model: false,
@@ -836,8 +836,12 @@ route('GET', '/api/inquiries', 'user', ({ me }) => {
 route('GET', '/api/inquiries/unread', 'user', ({ me }) => ({ count: inquiries.filter((i) => i.user_id === me.id && i.user_unread).length }));
 route('POST', '/api/inquiries', 'user', ({ me, body }) => {
   if (!String(body.content ?? '').trim()) throw new HttpError(400, '문의 내용을 입력해 주세요.');
+  // 서버와 같은 규칙: 챗봇 답변을 받은 대화에서만 재단에 문의할 수 있다
   const conv = body.conversation_id ? ownConv(me, String(body.conversation_id)) : null;
-  const row = { id: nextId(), user_id: me.id, conversation_id: conv?.id ?? null, attached_transcript: conv ? transcript(conv.id) : null, content: body.content, answer: null, answered_by: null, status: 'pending', created_at: ts(), answered_at: null };
+  if (!conv || !messages.some((m) => m.conversation_id === conv.id && m.role === 'assistant')) {
+    throw new HttpError(400, "재단 문의는 챗봇에 먼저 질문한 뒤, 답변 아래 '재단에 문의하기'로 남길 수 있습니다.");
+  }
+  const row = { id: nextId(), user_id: me.id, conversation_id: conv.id, attached_transcript: transcript(conv.id), content: body.content, answer: null, answered_by: null, status: 'pending', created_at: ts(), answered_at: null };
   inquiries.push(row);
   return inquiryRow(row);
 });

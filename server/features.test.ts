@@ -69,7 +69,17 @@ test('답변마다 그때 쓰던 표준답안 차수가 기록된다', async () 
 
 test('1:1 문의 답변이 오면 문의자에게 새 답변 수가 보이고, 목록을 열면 사라진다. 답변은 표준답안 등록 표시를 남길 수 있다', async () => {
   const { app, admin, user } = await setup();
-  const inq = (await app.inject({ method: 'POST', url: '/api/inquiries', headers: { cookie: user }, payload: { content: '워크숍 숙소비 기준이 궁금합니다' } })).json();
+  // 챗봇을 거치지 않은 바로 문의는 막힌다
+  const direct = await app.inject({ method: 'POST', url: '/api/inquiries', headers: { cookie: user }, payload: { content: '워크숍 숙소비 기준이 궁금합니다' } });
+  assert.equal(direct.statusCode, 400);
+  assert.equal(direct.json().code, 'CHAT_FIRST');
+  const conv = (await app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: user }, payload: {} })).json();
+  // 대화를 열기만 하고 질문하지 않았어도 막힌다
+  const empty = await app.inject({ method: 'POST', url: '/api/inquiries', headers: { cookie: user }, payload: { content: '문의', conversation_id: conv.id } });
+  assert.equal(empty.statusCode, 400);
+  await app.inject({ method: 'POST', url: `/api/conversations/${conv.id}/messages`, headers: { cookie: user }, payload: { content: '회의비 집행 기준은?' } });
+  const inq = (await app.inject({ method: 'POST', url: '/api/inquiries', headers: { cookie: user }, payload: { content: '워크숍 숙소비 기준이 궁금합니다', conversation_id: conv.id } })).json();
+  assert.match(inq.attached_transcript, /회의비 집행 기준은/);
   const unread = async () => (await app.inject({ url: '/api/inquiries/unread', headers: { cookie: user } })).json().count;
   assert.equal(await unread(), 0);
   await app.inject({ method: 'POST', url: `/api/manage/inquiries/${inq.id}/answer`, headers: { cookie: admin }, payload: { answer: '숙박비 기준에 따릅니다.' } });
