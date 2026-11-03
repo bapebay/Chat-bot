@@ -133,7 +133,7 @@ export function evaluationRoutes(app: FastifyInstance, db: DB, llm: LlmClient, k
     return { ok: true };
   });
 
-  // 검수자 판정: 근거답변이 '적절' / '잘못된 결론'인지. 잘못된 결론이 1건이라도 있으면 통과하지 못한다
+  // 관리자 판정: 근거답변이 '적절' / '잘못된 결론'인지. 잘못된 결론이 1건이라도 있으면 통과하지 못한다
   app.patch('/api/admin/eval/results/:id', { preHandler: admin }, async (req, reply) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     const b = (req.body ?? {}) as Record<string, unknown>;

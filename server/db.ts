@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   UNIQUE (message_id, user_id)
 );
 
--- 검토 대기함: Bad 평가·근거 없음·범위 외 답변을 모아 검수자가 처리
+-- 검토 대기함: Bad 평가·근거 없음·범위 외 답변을 모아 관리자가 처리
 CREATE TABLE IF NOT EXISTS review_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
@@ -289,6 +289,8 @@ function migrate(db: DB) {
   if (!has('inquiries', 'user_unread')) db.exec('ALTER TABLE inquiries ADD COLUMN user_unread INTEGER NOT NULL DEFAULT 0');
   // 문의 답변으로 만든 표준답안 통합번호 (같은 문의를 두 번 등록하지 않게 표시)
   if (!has('inquiries', 'qa_id')) db.exec('ALTER TABLE inquiries ADD COLUMN qa_id TEXT');
+  // 검수자 역할을 없애고 그 권한을 관리자에게 합쳤다 (기존 검수자 계정은 관리자로)
+  db.exec(`UPDATE users SET role = 'admin' WHERE role = 'reviewer'`);
   // 연결 대상 연락처 기능을 없앴다 (답변에는 '○○에 문의하시기 바랍니다'만 안내)
   db.exec('DROP TABLE IF EXISTS referral_contacts');
 }

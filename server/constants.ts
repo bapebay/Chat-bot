@@ -9,7 +9,7 @@ export const REGIONS = [
 
 export const BUSINESS_TYPES = ['순수앵커', '글로컬', '의대교육', '초광역', '기타', '모름'] as const;
 
-export const ROLES = ['user', 'reviewer', 'admin'] as const;
+export const ROLES = ['user', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const MAX_LOGIN_FAILURES = 10;

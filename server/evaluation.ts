@@ -45,7 +45,7 @@ export interface EvalSummary {
   type_total: number;
   /** 기대 유형이 연결형·범위외·근거없음인 문항(= 답하면 안 되는 질문) 중 맞게 걸러낸 비율 */
   referral_accuracy: number | null;
-  /** 검수자가 '잘못된 결론'으로 표시한 건수 */
+  /** 관리자가 '잘못된 결론'으로 표시한 건수 */
   wrong: number;
   /** 아직 검수 판정을 하지 않은 근거답변 수 */
   unreviewed: number;

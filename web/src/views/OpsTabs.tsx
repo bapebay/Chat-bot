@@ -351,7 +351,7 @@ export function NoticeTab() {
             <input className="input" placeholder="통합번호 (쉼표로 구분, 예: B4-01-a, C2-03-a)" value={f.recheck_qa_ids} onChange={(e) => setF({ ...f, recheck_qa_ids: e.target.value })} />
             <input className="input" placeholder="또는 중분류 전체 (예: 수당)" value={f.recheck_category} onChange={(e) => setF({ ...f, recheck_category: e.target.value })} />
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">표시만 할 뿐 챗봇 검색에서 빠지지는 않습니다. 검수자가 편집기에서 확인·저장하면 표시가 사라집니다.</p>
+          <p className="mt-1 text-[11px] text-slate-500">표시만 할 뿐 챗봇 검색에서 빠지지는 않습니다. 관리자가 표준답안 편집기에서 확인·저장하면 표시가 사라집니다.</p>
         </div>
         <button type="button" className="btn-primary" disabled={!f.title.trim()} onClick={create}>
           게시

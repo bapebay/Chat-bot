@@ -143,7 +143,7 @@ export function ipAllowed(ip: string, allowed: string[]): boolean {
 
 const STAFF_PREFIXES = ['/api/admin/', '/api/review/', '/api/manage/'];
 
-/** 관리자·검수자 메뉴(API)는 허용한 IP에서만 열리게 한다. 목록이 비어 있으면 제한하지 않는다 */
+/** 관리 메뉴(API)는 허용한 IP에서만 열리게 한다. 목록이 비어 있으면 제한하지 않는다 */
 export function staffIpGuard(app: FastifyInstance, allowed: string[]): void {
   if (!allowed.length) return;
   app.addHook('onRequest', async (req, reply) => {

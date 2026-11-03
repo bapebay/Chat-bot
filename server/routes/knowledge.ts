@@ -61,7 +61,6 @@ export function sendXlsx(reply: FastifyReply, buffer: Buffer, filename: string) 
 
 export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase) {
   const admin = requireRole(db, 'admin');
-  const reviewer = requireRole(db, 'reviewer');
   const fail = (reply: FastifyReply, e: unknown) => reply.code(400).send({ error: (e as Error).message });
 
   app.get('/api/admin/knowledge/status', { preHandler: admin }, async () => ({
@@ -123,7 +122,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     return { ok: true };
   });
 
-  app.get('/api/admin/knowledge/qa/versions/:id/items', { preHandler: reviewer }, async (req) => {
+  app.get('/api/admin/knowledge/qa/versions/:id/items', { preHandler: admin }, async (req) => {
     const id = idParam((req.params as { id: string }).id) ?? 0;
     return listQaItems(db, id, str((req.query as Record<string, unknown>).q));
   });
@@ -209,7 +208,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   });
 
   // ----- 검색 시험: 질문을 넣으면 어떤 근거가 몇 점으로 찾아지는지 보여준다 -----
-  app.post('/api/admin/knowledge/search-test', { preHandler: reviewer }, async (req, reply) => {
+  app.post('/api/admin/knowledge/search-test', { preHandler: admin }, async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const query = str(b.query);
     const businessType = str(b.business_type) || '모름';

@@ -30,7 +30,7 @@ async function setup() {
      VALUES (?, ?, ?, ?, '부산', '모름', ?, 'approved')`,
   );
   ins.run('admin', hashPassword('adminpass1'), '재단', '중앙앵커센터', 'admin');
-  ins.run('rev01', hashPassword('revpass12'), '재단', '중앙앵커센터', 'reviewer');
+  ins.run('rev01', hashPassword('revpass12'), '재단', '중앙앵커센터', 'admin'); // 검수자 역할을 없애 관리자가 검수 업무를 맡는다
   ins.run('user01', hashPassword('userpass1'), '대학', '부산대학교', 'user');
   const base = { category3: '', checklist: '', referral_answer: '', is_referral: 0, review_status: '확정', change_history: '' };
   activateQaVersion(

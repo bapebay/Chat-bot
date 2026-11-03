@@ -51,7 +51,7 @@ export const config = {
   security: {
     trustProxy: trustProxy(),
     rateLimit: process.env.RATE_LIMIT !== 'off',
-    /** 관리자·검수자 메뉴를 쓸 수 있는 IP·대역 (비우면 제한 없음) */
+    /** 관리자 메뉴를 쓸 수 있는 IP·대역 (비우면 제한 없음) */
     staffAllowedIps: list('ADMIN_ALLOWED_IPS'),
   },
   backup: {

@@ -91,7 +91,6 @@ function addUser(u: Partial<Json>) {
   return row;
 }
 const admin = addUser({ username: 'admin', role: 'admin', org_type: '재단', org_name: '중앙앵커센터', region: '해당없음' });
-addUser({ username: 'reviewer', role: 'reviewer', org_type: '재단', org_name: '중앙앵커센터', region: '해당없음' });
 // 데모 사용자는 사업 유형 '모름'으로 질문하는 상태가 기본 (요청에 따라 고정)
 const user = addUser({ username: 'user', role: 'user', org_type: '대학', org_name: '가상대학교 산학협력단', region: '부산', business_type: '모름' });
 const others = [
@@ -138,7 +137,7 @@ function audit(action: string, target = '', detail = '') {
 }
 auditLogs.push(
   { id: nextId(), username: 'admin', action: '표준 Q&A 서비스 적용', target: `#${qaVersionId}`, detail: '', created_at: ago(60 * 24 * 3) },
-  { id: nextId(), username: 'admin', action: '권한 변경', target: 'reviewer', detail: 'user → reviewer', created_at: ago(60 * 24 * 5) },
+  { id: nextId(), username: 'admin', action: '가입 승인', target: 'center_daegu', detail: '', created_at: ago(60 * 24 * 5) },
 );
 
 const conversations: Json[] = [];
@@ -707,10 +706,10 @@ function summarize(runId: number) {
 
 // ================= 라우터 =================
 type Handler = (p: { params: string[]; body: Json; query: URLSearchParams; me: Json }) => Json | Promise<Json>;
-const routes: { method: string; re: RegExp; role: 'none' | 'user' | 'reviewer' | 'admin'; handler: Handler }[] = [];
-const route = (method: string, path: string, role: 'none' | 'user' | 'reviewer' | 'admin', handler: Handler) =>
+const routes: { method: string; re: RegExp; role: 'none' | 'user' | 'admin'; handler: Handler }[] = [];
+const route = (method: string, path: string, role: 'none' | 'user' | 'admin', handler: Handler) =>
   routes.push({ method, re: new RegExp(`^${path.replace(/:\w+/g, '([^/]+)')}$`), role, handler });
-const LEVEL = { none: 0, user: 1, reviewer: 2, admin: 3 } as const;
+const LEVEL = { none: 0, user: 1, admin: 3 } as const;
 const pub = (u: Json) => {
   const { password: _p, ...rest } = u;
   return rest;
@@ -845,17 +844,17 @@ route('POST', '/api/inquiries', 'user', ({ me, body }) => {
   inquiries.push(row);
   return inquiryRow(row);
 });
-route('GET', '/api/manage/inquiries', 'reviewer', ({ query }) => {
+route('GET', '/api/manage/inquiries', 'admin', ({ query }) => {
   const s = query.get('status');
   return inquiries.filter((i) => !s || i.status === s).sort((a, b) => b.id - a.id).map(inquiryRow);
 });
-route('POST', '/api/manage/inquiries/:id/answer', 'reviewer', ({ me, params, body }) => {
+route('POST', '/api/manage/inquiries/:id/answer', 'admin', ({ me, params, body }) => {
   const i = byId(inquiries, params[0]);
   if (!i) throw new HttpError(404, '문의를 찾을 수 없습니다.');
   Object.assign(i, { answer: body.answer, answered_by: me.id, status: 'answered', answered_at: ts(), user_unread: 1 });
   return inquiryRow(i);
 });
-route('POST', '/api/manage/inquiries/:id/qa', 'reviewer', ({ params, body }) => {
+route('POST', '/api/manage/inquiries/:id/qa', 'admin', ({ params, body }) => {
   const i = byId(inquiries, params[0]);
   if (!i) throw new HttpError(404, '문의를 찾을 수 없습니다.');
   i.qa_id = String(body.qa_id ?? '');
@@ -864,7 +863,7 @@ route('POST', '/api/manage/inquiries/:id/qa', 'reviewer', ({ params, body }) => 
 });
 
 // ----- 검토 대기함·표준답안 편집 -----
-route('GET', '/api/review/queue', 'reviewer', ({ query }) => {
+route('GET', '/api/review/queue', 'admin', ({ query }) => {
   const done = query.get('status') === 'done';
   return reviewQueue
     .filter((r) => (done ? r.status !== 'pending' : r.status === 'pending'))
@@ -885,7 +884,7 @@ route('GET', '/api/review/queue', 'reviewer', ({ query }) => {
         username: u.username,
         org_name: u.org_name,
         region: u.region,
-        resolved_by_name: r.resolved_by ? byId(users, r.resolved_by)?.username : r.status !== 'pending' ? 'reviewer' : null,
+        resolved_by_name: r.resolved_by ? byId(users, r.resolved_by)?.username : r.status !== 'pending' ? 'admin' : null,
         question: q?.content ?? null,
         cited_qa_ids: cit?.qa?.map((x: Json) => x.qa_id) ?? [],
         retrieved_qa_ids: cit?.retrieved?.qa?.map((x: Json) => x.qa_id) ?? [],
@@ -893,14 +892,14 @@ route('GET', '/api/review/queue', 'reviewer', ({ query }) => {
       };
     });
 });
-route('POST', '/api/review/queue/:id/resolve', 'reviewer', ({ me, params, body }) => {
+route('POST', '/api/review/queue/:id/resolve', 'admin', ({ me, params, body }) => {
   const r = byId(reviewQueue, params[0]);
   if (!r) throw new HttpError(404, '항목을 찾을 수 없습니다.');
   Object.assign(r, { status: body.action === 'ignored' ? 'ignored' : 'resolved', resolution: body.action, qa_id: body.qa_id ?? null, note: body.note ?? '', resolved_by: me.id, resolved_at: ts() });
   return { ok: true };
 });
 const activeVersion = () => qaVersions.find((v) => v.status === 'active');
-route('GET', '/api/review/qa', 'reviewer', ({ query }) => {
+route('GET', '/api/review/qa', 'admin', ({ query }) => {
   const v = activeVersion();
   if (!v) return { version_id: null, total: 0, items: [] };
   const q = query.get('q') ?? '';
@@ -915,13 +914,13 @@ route('GET', '/api/review/qa', 'reviewer', ({ query }) => {
   );
   return { version_id: v.id, total: items.length, items: items.slice(0, 300) };
 });
-route('GET', '/api/review/qa/facets', 'reviewer', () => {
+route('GET', '/api/review/qa/facets', 'admin', () => {
   const v = activeVersion();
   const items = qaItems.filter((i) => i.version_id === v?.id);
   const d = (k: string) => [...new Set(items.map((i) => i[k]).filter(Boolean))].sort();
   return { category1: d('category1'), category2: d('category2'), review_status: d('review_status') };
 });
-route('GET', '/api/review/qa/:qaId/revisions', 'reviewer', ({ params }) => qaRevisions.filter((r) => r.qa_id === decodeURIComponent(params[0])).sort((a, b) => b.id - a.id));
+route('GET', '/api/review/qa/:qaId/revisions', 'admin', ({ params }) => qaRevisions.filter((r) => r.qa_id === decodeURIComponent(params[0])).sort((a, b) => b.id - a.id));
 const QA_FIELDS = ['qa_id', 'category1', 'category2', 'category3', 'question', 'checklist', 'answer', 'referral_answer', 'review_status', 'change_history'];
 const snap = (o: Json) => JSON.stringify(Object.fromEntries([...QA_FIELDS, 'is_referral'].map((k) => [k, k === 'is_referral' ? (o[k] ? 1 : 0) : o[k]])));
 function readQa(body: Json) {
@@ -930,7 +929,7 @@ function readQa(body: Json) {
   v.is_referral = body.is_referral ? 1 : 0;
   return v;
 }
-route('PUT', '/api/review/qa/:id', 'reviewer', ({ me, params, body }) => {
+route('PUT', '/api/review/qa/:id', 'admin', ({ me, params, body }) => {
   const it = byId(qaItems, params[0]);
   if (!it) throw new HttpError(404, '표준답안을 찾을 수 없습니다.');
   const v = readQa(body);
@@ -940,7 +939,7 @@ route('PUT', '/api/review/qa/:id', 'reviewer', ({ me, params, body }) => {
   audit('표준답안 수정', v.qa_id, body.reason ?? '');
   return it;
 });
-route('POST', '/api/review/qa', 'reviewer', ({ me, body }) => {
+route('POST', '/api/review/qa', 'admin', ({ me, body }) => {
   const v = readQa(body);
   const ver = activeVersion();
   if (!ver) throw new HttpError(400, '서비스 중인 버전이 없습니다.');
@@ -952,7 +951,7 @@ route('POST', '/api/review/qa', 'reviewer', ({ me, body }) => {
   audit('표준답안 추가', v.qa_id, body.reason ?? '');
   return row;
 });
-route('DELETE', '/api/review/qa/:id', 'reviewer', ({ me, params, body }) => {
+route('DELETE', '/api/review/qa/:id', 'admin', ({ me, params, body }) => {
   const it = byId(qaItems, params[0]);
   if (!it) throw new HttpError(404, '표준답안을 찾을 수 없습니다.');
   qaItems = qaItems.filter((x) => x !== it);
@@ -1112,7 +1111,7 @@ route('DELETE', '/api/admin/knowledge/qa/versions/:id', 'admin', ({ params }) =>
   qaItems = qaItems.filter((i) => i.version_id !== v.id);
   return { ok: true };
 });
-route('GET', '/api/admin/knowledge/qa/versions/:id/items', 'reviewer', ({ params, query }) => {
+route('GET', '/api/admin/knowledge/qa/versions/:id/items', 'admin', ({ params, query }) => {
   const q = query.get('q') ?? '';
   return qaItems.filter((i) => i.version_id === Number(params[0]) && (!q || [i.qa_id, i.question, i.checklist, i.answer].some((t) => t.includes(q)))).slice(0, 200);
 });
@@ -1218,7 +1217,7 @@ route('DELETE', '/api/admin/knowledge/guidelines/:id', 'admin', ({ params }) => 
   audit('지침 문서 삭제', d.name);
   return { ok: true };
 });
-route('POST', '/api/admin/knowledge/search-test', 'reviewer', ({ body }) => {
+route('POST', '/api/admin/knowledge/search-test', 'admin', ({ body }) => {
   const r = search(String(body.query ?? ''), body.business_type || '모름');
   const f = (h: Json) => ({ keyword: round(h.keyword), semantic: null, relevant: h.relevant });
   return {
@@ -1436,6 +1435,8 @@ export function importState(st: Json): void {
     if (Array.isArray(st[k])) list.splice(0, list.length, ...st[k]);
   }
   // 예전에 저장된 데이터에서도 데모 사용자의 기본 사업 유형은 '모름'
+  // 검수자 역할을 없앴다: 예전에 저장된 데모의 검수자 계정은 지운다 (권한은 관리자가 가짐)
+  for (const u of users.filter((x) => x.role === 'reviewer')) users.splice(users.indexOf(u), 1);
   const demoUser = users.find((u) => u.username === 'user');
   if (demoUser) demoUser.business_type = '모름';
   for (const r of evalRuns) {

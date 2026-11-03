@@ -123,7 +123,7 @@ test('평가 실행 → 적중률·유형 정확도·통과 판정, 검수 판�
   assert.equal(s.referral_accuracy, 1);
   assert.equal(s.passed, false); // 0.667 < 0.8
 
-  // 기준을 낮추면 통과, 검수자가 '잘못된 결론'을 표시하면 다시 불통과
+  // 기준을 낮추면 통과, 관리자가 '잘못된 결론'을 표시하면 다시 불통과
   await app.inject({ method: 'PUT', url: '/api/admin/settings/eval_pass_hit_rate', headers: { cookie }, payload: { value: '0.6' } });
   const evidence = detail.results.filter((r: { answer_type: string }) => r.answer_type === '근거답변');
   const first = evidence[0];
