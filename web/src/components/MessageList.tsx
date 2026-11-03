@@ -1,6 +1,7 @@
-import { Bot, Check, Copy, MessageSquareQuote, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
+import { Bot, Check, ChevronDown, Copy, MessageSquareQuote, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
 import { parseCitations, type Citations, type Message } from '../api';
+import { splitDetail } from '../answerSections';
 import { Markdown } from './ui';
 
 export interface Feedback {
@@ -163,6 +164,39 @@ export function MessageList({
   );
 }
 
+/** 답변 본문: '■ 세부내용'은 접어 두고, 누르면 펼친다 (질문요지·답변만 먼저 보이게) */
+function AnswerBody({ body }: { body: string }) {
+  const [open, setOpen] = useState(false);
+  const { before, detail, after } = splitDetail(body);
+  if (!detail) return <Markdown text={body} />;
+  return (
+    <>
+      {before && <Markdown text={before} />}
+      <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-700">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-900"
+        >
+          <span>■ 세부내용 {open ? '접기' : '펼쳐 보기'}</span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {open && (
+          <div className="border-t border-slate-200 px-3 pb-1 pt-2 dark:border-slate-700">
+            <Markdown text={detail} />
+          </div>
+        )}
+      </div>
+      {after && (
+        <div className="mt-3">
+          <Markdown text={after} />
+        </div>
+      )}
+    </>
+  );
+}
+
 function AssistantMessage({
   m,
   onAskStaff,
@@ -189,7 +223,7 @@ function AssistantMessage({
       </div>
       <div className="min-w-0 max-w-[92%] sm:max-w-[80%]">
         <div className="card rounded-tl-sm p-4">
-          <Markdown text={body} />
+          <AnswerBody body={body} />
           {closing && <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{closing}</p>}
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}
         </div>
@@ -234,6 +268,7 @@ function RetrievedLine({ r }: { r: NonNullable<Citations['retrieved']> }) {
           <b className="font-semibold">{label}</b> {list.length ? list.join(', ') : '없음'}
         </span>
       ))}
+      {!!r.rewritten?.length && <span className="block">지침 용어로 다시 찾음: {r.rewritten.join(' / ')}</span>}
     </span>
   );
 }

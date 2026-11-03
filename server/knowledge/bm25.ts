@@ -1,4 +1,4 @@
-import { QUERY_STOP_TOKENS, tokenize } from './text.js';
+import { bigrams, QUERY_STOP_TOKENS, queryVariants, tokenize, words } from './text.js';
 
 /**
  * BM25 키워드 검색 + '핵심어 포함 비율(coverage)'.
@@ -44,9 +44,35 @@ export class Bm25 {
     return Math.log(1 + (n - df + 0.5) / (df + 0.5));
   }
 
-  /** 모든 문서의 [bm25, coverage] */
+  /**
+   * 질문 검색어. 띄어쓰기 없이 붙여 쓴 말('회의비집행기준')은 낱말 경계에 '비집'·'행기' 같은
+   * 자료에 없는 묶음이 생겨 근거 판정을 떨어뜨리므로, 앞뒤 묶음은 자료에 있는데 그 묶음만 없으면 뺀다.
+   */
+  private queryTokens(query: string): string[] {
+    const out = new Set<string>();
+    for (const w of words(query)) {
+      const bg = bigrams(w);
+      bg.forEach((b, i) => {
+        const junction = !this.df.has(b) && i > 0 && i < bg.length - 1 && this.df.has(bg[i - 1]) && this.df.has(bg[i + 1]);
+        if (!junction) out.add(b);
+      });
+    }
+    return [...out].filter((t) => !QUERY_STOP_TOKENS.has(t));
+  }
+
+  /**
+   * 모든 문서의 [bm25, coverage].
+   * 같은 뜻의 다른 말로 바꾼 질문('출장비' → '여비')으로도 찾아 문서마다 가장 잘 맞는 값을 쓴다.
+   */
   score(query: string): { bm25: number; coverage: number }[] {
-    const qTokens = [...new Set(tokenize(query))].filter((t) => !QUERY_STOP_TOKENS.has(t));
+    const variants = queryVariants(query);
+    const all = variants.map((v) => this.scoreOne(v));
+    if (all.length === 1) return all[0];
+    return all[0].map((_, i) => ({ bm25: Math.max(...all.map((s) => s[i].bm25)), coverage: Math.max(...all.map((s) => s[i].coverage)) }));
+  }
+
+  private scoreOne(query: string): { bm25: number; coverage: number }[] {
+    const qTokens = this.queryTokens(query);
     const idfs = qTokens.map((t) => (this.df.has(t) ? this.idf(t) : this.unseenIdf));
     const idfSum = idfs.reduce((a, b) => a + b, 0) || 1;
     return this.docs.map((tf, i) => {

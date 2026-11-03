@@ -78,6 +78,8 @@ export interface Citations {
     qa: { qa_id: string; keyword: number; semantic: number | null; relevant: boolean }[];
     guideline: { id: string; clause: string; keyword: number; semantic: number | null; relevant: boolean }[];
     principle?: { code: string; keyword: number; semantic: number | null; relevant: boolean }[];
+    /** 말이 달라 못 찾아 AI가 지침 용어로 바꿔 다시 찾은 검색 문장 */
+    rewritten?: string[];
   };
 }
 

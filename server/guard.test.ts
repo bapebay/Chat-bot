@@ -197,3 +197,23 @@ test('답변 속 내부 꼬리표(G1·P1)는 사용자용 말로 바꾼다', () 
     ['- 지침에 따르면 RBD 비용은 준용합니다.', '- [FAQ] 30. 보직수당의 지급 대상은 어떻게 되나요?', '- [질의응답 사례상 일반 원칙] 회의비 원칙', '- [유사 질의응답 사례]'].join('\n'),
   );
 });
+
+test('말이 달라 못 찾으면 AI가 지침 용어로 바꾼 검색 문장으로 한 번 더 찾고, 엉뚱한 질문엔 AI를 부르지 않는다', async () => {
+  const { calls, ask } = await setup((req) =>
+    req.system.includes('검색어 도우미')
+      ? JSON.stringify({ queries: ['회의비 집행 기준'] })
+      : JSON.stringify({ answer_type: '근거답변', business_type: '공통', answer_markdown: '1인당 기준 안에서 집행합니다.', cited_qa_ids: ['C1-01'], cited_guideline: [], referral: '없음' }),
+  );
+  // 비슷한 후보(회의·기준)는 있지만 기준 미달인 질문 → 다시 찾기 → 근거 찾음 → 답변
+  const res = await ask('회의 밥값 처리 기준 방법');
+  const m = res.json().messages.at(-1);
+  assert.equal(m.answer_type, '근거답변');
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].system, /검색어 도우미/);
+  assert.match(calls[1].messages.at(-1)!.content, /통합번호: C1-01/);
+  assert.deepEqual(JSON.parse(m.citations).retrieved.rewritten, ['회의비 집행 기준']);
+  // 비슷한 후보도 없는 엉뚱한 질문은 AI를 부르지 않는다
+  const none = await ask('오늘 점심 메뉴 추천해줘');
+  assert.equal(none.json().messages.at(-1).answer_type, '근거없음');
+  assert.equal(calls.length, 2);
+});

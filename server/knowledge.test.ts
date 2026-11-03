@@ -7,6 +7,7 @@ import { openDatabase } from './db.js';
 import type { Embedder } from './knowledge/embedder.js';
 import { chunkDocument, chunkMarkdown, chunkTextFile } from './knowledge/guideline.js';
 import { parseQaWorkbook } from './knowledge/excel.js';
+import { Bm25 } from './knowledge/bm25.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { findPii, maskPii } from './knowledge/text.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
@@ -415,4 +416,31 @@ test('표준 Q&A 여러 파일 업로드: 파트별 MD·엑셀을 하나의 버�
   const r = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', headers: { cookie, 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: bad });
   assert.equal(r.statusCode, 400);
   assert.match(r.json().error, /^빈파일\.md: 표준답안을 찾지 못했습니다/);
+});
+
+test('검색: 붙여 쓴 말·구어체 말끝·같은 뜻 다른 말도 근거를 찾고, 엉뚱한 질문은 그대로 걸러진다', () => {
+  const docs = [
+    '회의비 집행 기준 회의비는 1인당 기준 단가 안에서 집행한다',
+    '국내 여비 기준 여비는 공무원 여비 규정을 준용한다',
+    '부서장 보직수당 지급 대상 부서장도 내부 규정에 보직이 있으면 보직수당을 받을 수 있다',
+    '연구책임자 수당 연구책임자는 해당 과제에서 수당을 받을 수 없다',
+    '사전품의 원칙 회의비는 사전품의를 거쳐 집행한다',
+  ];
+  const bm = new Bm25(docs);
+  const best = (q: string) => {
+    const s = bm.score(q);
+    const i = s.reduce((bi, x, k) => (x.coverage > s[bi].coverage ? k : bi), 0);
+    return { i, coverage: s[i].coverage };
+  };
+  // 띄어쓰기 없이 붙여 씀
+  assert.ok(best('회의비집행기준').coverage >= 0.5);
+  // 같은 뜻 다른 말: 출장비 → 여비, 부서책임자 → 부서장, 과제 책임자 → 연구책임자, 결재 → 품의
+  assert.deepEqual([best('출장비 기준 알려줘'), best('부서책임자가 수당 받을수 있셈?'), best('과제 책임자가 수당 받을 수 있음?'), best('회의비 사전 결재 필요해?')].map((x) => [x.i, x.coverage >= 0.5]), [
+    [1, true],
+    [2, true],
+    [3, true],
+    [4, true],
+  ]);
+  // 엉뚱한 질문은 여전히 기준 미달
+  for (const q of ['오늘 점심 메뉴 추천해줘', '파이썬 코드 짜줘', '아무말']) assert.ok(best(q).coverage < 0.5, q);
 });

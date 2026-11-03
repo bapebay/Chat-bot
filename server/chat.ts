@@ -7,6 +7,7 @@ import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
 import { BLOCKED_TEXT, detectInjection, LEAK_REASON, leaksInstructions, publicRefs } from './knowledge/guard.js';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from './knowledge/split.js';
+import { parseRewrite, REWRITE_SCHEMA, REWRITE_SYSTEM, worthRewriting } from './knowledge/rewrite.js';
 export { looksLikeFollowUp };
 import type { ChatTurn, LlmClient } from './llm/index.js';
 import { getNumberSetting, getSetting } from './settings.js';
@@ -56,6 +57,8 @@ export interface Citations {
     guideline: { id: string; clause: string; keyword: number; semantic: number | null; relevant: boolean }[];
     /** 집행원리 (이 기능 이전 답변에는 없음) */
     principle?: { code: string; keyword: number; semantic: number | null; relevant: boolean }[];
+    /** 말이 달라 못 찾아 AI가 지침 용어로 바꿔 다시 찾은 검색 문장 */
+    rewritten?: string[];
   };
 }
 
@@ -293,15 +296,41 @@ export async function generateAnswer(
     if (retry.passed && (followUp || overlapsEvidence(query, retry))) result = retry;
   }
 
+  // 그래도 못 찾았는데 비슷한 후보는 있으면: AI가 지침 용어로 바꾼 검색 문장으로 한 번 더 찾는다
+  // ('출장 밥값 되나요?'처럼 자료와 말이 달라 놓치는 질문). 보통 질문은 이 단계를 거치지 않는다.
+  let rewriteUsage: { provider: string; model: string; inputTokens: number; outputTokens: number } | null = null;
+  let rewritten: string[] = [];
+  if (worthRewriting(result) && !result.outOfScope) {
+    try {
+      const rw = await llm.generate({ system: REWRITE_SYSTEM, messages: [{ role: 'user', content: question }], jsonSchema: REWRITE_SCHEMA });
+      rewriteUsage = { provider: rw.provider, model: rw.model, inputTokens: rw.inputTokens ?? 0, outputTokens: rw.outputTokens ?? 0 };
+      rewritten = parseRewrite(rw.text);
+    } catch {
+      rewritten = []; // 다시 찾기는 덤이므로 실패해도 원래 흐름대로
+    }
+    if (rewritten.length) {
+      const again = await Promise.all(rewritten.map((q) => kb.search(q, businessType)));
+      if (again.some((r) => r.passed)) {
+        result = mergeSearchResults(
+          result,
+          again,
+          { qa: (h) => h.doc.id, guideline: (h) => h.doc.id, principle: (h) => h.doc.id },
+          { perPart: 3, maxQa: getNumberSetting(db, 'top_k_qa'), maxGuide: getNumberSetting(db, 'top_k_guideline'), maxPrinciple: TOP_K_PRINCIPLE },
+        );
+      }
+    }
+  }
+
   const base: Citations = {
     business_type: null,
     referral: null,
     qa: [],
     guideline: [],
     out_of_scope: null,
-    retrieved: retrievedLog(result),
+    retrieved: { ...retrievedLog(result), ...(rewritten.length ? { rewritten } : {}) },
   };
-  const noModel = { provider: null, model: null, inputTokens: null, outputTokens: null };
+  // 다시 찾기에 AI를 썼으면 그 사용량도 남긴다 (비용 집계)
+  const noModel = rewriteUsage ?? { provider: null, model: null, inputTokens: null, outputTokens: null };
 
   const bestEvidence = Math.max(
     strength(result.qa.find((h) => h.relevant)),
@@ -336,8 +365,8 @@ export async function generateAnswer(
   const usage = {
     provider: llmResult.provider,
     model: llmResult.model,
-    inputTokens: llmResult.inputTokens,
-    outputTokens: llmResult.outputTokens,
+    inputTokens: (llmResult.inputTokens ?? 0) + (rewriteUsage?.inputTokens ?? 0) || llmResult.inputTokens,
+    outputTokens: (llmResult.outputTokens ?? 0) + (rewriteUsage?.outputTokens ?? 0) || llmResult.outputTokens,
   };
 
   // 3겹: 답변에 내부 지시문이 섞여 나오면 사용자에게 보여주지 않는다

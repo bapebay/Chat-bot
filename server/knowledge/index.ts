@@ -79,6 +79,8 @@ export interface SearchResult {
   /** 근거로 쓸 만한 항목이 하나라도 있는지 */
   passed: boolean;
   mode: 'hybrid' | 'keyword';
+  /** 표준답안·지침·집행원리 중 가장 높은 핵심어 포함 비율 (근거 미달일 때 다시 찾기를 할지 판단) */
+  bestKeyword?: number;
 }
 
 /** 질문마다 AI에 넘기는 집행원리 최대 건수 */
@@ -255,9 +257,12 @@ export class KnowledgeBase {
       return [...relevant, ...near].slice(0, k);
     };
 
+    const guideHits = this.guideline.rank(query, qv, thresholds);
+    const principleHits = this.principle.rank(query, qv, thresholds);
+    const bestKeyword = Math.max(0, ...[...qaHits, ...guideHits, ...principleHits].map((h) => h.keyword));
     const qa = pick(qaHits, topQa);
-    const guideline = pick(this.guideline.rank(query, qv, thresholds), topGuide);
-    const principle = pick(this.principle.rank(query, qv, thresholds), TOP_K_PRINCIPLE);
+    const guideline = pick(guideHits, topGuide);
+    const principle = pick(principleHits, TOP_K_PRINCIPLE);
     const oosTop = this.oos.rank(query, qv, thresholds).sort((a, b) => b.score - a.score)[0] ?? null;
 
     return {
@@ -267,6 +272,7 @@ export class KnowledgeBase {
       outOfScope: oosTop && oosTop.relevant ? oosTop : null,
       passed: qa.some((h) => h.relevant) || guideline.some((h) => h.relevant) || principle.some((h) => h.relevant),
       mode: qv ? 'hybrid' : 'keyword',
+      bestKeyword,
     };
   }
 }
