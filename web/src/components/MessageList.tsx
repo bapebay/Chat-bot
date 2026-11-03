@@ -208,12 +208,36 @@ function AssistantMessage({
             <span>
               {m.provider ? `${m.provider}/${m.model} · 입력 ${m.input_tokens ?? '-'} · 출력 ${m.output_tokens ?? '-'} 토큰 · ` : 'AI 호출 없음 · '}
               {m.latency_ms != null ? `${(m.latency_ms / 1000).toFixed(1)}초` : '-'}
-              {c?.retrieved && ` · 검색(${c.retrieved.mode === 'hybrid' ? '혼합' : '키워드'}): ${c.retrieved.qa.map((q) => `${q.qa_id}${q.relevant ? '' : '?'}`).join(', ') || '없음'}`}
+              {c?.retrieved && <RetrievedLine r={c.retrieved} />}
             </span>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * 관리자 대화 열람용: AI에 넘긴 근거를 근거 계층 순서(지침 및 FAQ → 집행원리 → 표준답안)로 보여 준다.
+ * '?'는 기준에 조금 못 미쳐 참고로만 넘긴 항목.
+ */
+function RetrievedLine({ r }: { r: NonNullable<Citations['retrieved']> }) {
+  const mark = (relevant: boolean) => (relevant ? '' : '?');
+  const parts = [
+    ['지침 및 FAQ', r.guideline.map((g) => `${g.clause}${mark(g.relevant)}`)],
+    ['집행원리', (r.principle ?? []).map((p) => `${p.code}${mark(p.relevant)}`)],
+    ['표준답안', r.qa.map((q) => `${q.qa_id}${mark(q.relevant)}`)],
+  ] as const;
+  return (
+    <span className="block w-full">
+      검색({r.mode === 'hybrid' ? '혼합' : '키워드'}) →{' '}
+      {parts.map(([label, list], i) => (
+        <span key={label}>
+          {i > 0 && ' · '}
+          <b className="font-semibold">{label}</b> {list.length ? list.join(', ') : '없음'}
+        </span>
+      ))}
+    </span>
   );
 }
 
