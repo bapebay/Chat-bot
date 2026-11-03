@@ -260,7 +260,17 @@ export function StatsTab() {
 export function AnswersBrowser() {
   const [filter, setFilter] = useState('bad');
   const [rows, setRows] = useState<
-    { id: number; answer_type: string; content: string; created_at: string; username: string; org_name: string; question: string | null; bad_reason: string | null }[]
+    {
+      id: number;
+      answer_type: string;
+      content: string;
+      created_at: string;
+      username: string;
+      org_name: string;
+      question: string | null;
+      bad_reason: string | null;
+      security?: string | null;
+    }[]
   >([]);
   const [open, setOpen] = useState<number | null>(null);
   useEffect(() => {
@@ -299,6 +309,13 @@ export function AnswersBrowser() {
               <div className="text-slate-800 dark:text-slate-100">Q. {r.question}</div>
               <div className="text-xs text-slate-500">
                 {r.answer_type} · {r.username} ({r.org_name}) · {formatTime(r.created_at)} {r.bad_reason && <span className="text-red-600">· Bad: {r.bad_reason}</span>}
+                {r.security && (
+                  <span className="text-red-600">
+                    {' '}
+                    · 차단: {r.security}
+                    {r.security === '지시문 노출 차단' ? ' (답변 단계 · AI 원래 답변은 감사 로그에 있음)' : ' (질문 단계 · AI 호출 안 함)'}
+                  </span>
+                )}
               </div>
             </button>
             {open === r.id && (

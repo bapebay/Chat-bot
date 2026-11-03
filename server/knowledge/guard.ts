@@ -44,19 +44,47 @@ export function detectInjection(question: string): string | null {
   return null;
 }
 
+const longLines = (text: string) =>
+  text
+    .split('\n')
+    .map((l) => squash(l.replace(/^[-#*\d.\s·]+/, '')))
+    .filter((l) => l.length >= 25);
+
 /**
- * 답변에 AI 지시문(시스템 프롬프트)의 문장이 그대로 들어 있으면 true.
- * 지시문에서 길고 특징적인 줄(공백 제외 25자 이상) 하나가 통째로 답변에 나오면 새어 나온 것으로 본다.
+ * 관리자가 쓴 시스템 프롬프트에서 '답변에 그대로 쓰라고 준 글'을 뺀 줄들.
+ * - 따옴표 안 예시 문장("…", “…”, ‘…’)은 답변에 그대로 나올 수 있으니 뺀다
+ * - 제목에 '그대로'가 들어간 단락(예: '# 마무리 문구 (모든 답변 끝에 그대로 붙임)')은 통째로 뺀다
  */
-export function leaksInstructions(answer: string, instructions: string): boolean {
+export function promptLinesToGuard(prompt: string): string[] {
+  const kept: string[] = [];
+  let verbatim = false;
+  for (const raw of prompt.split('\n')) {
+    const line = raw.trim();
+    if (/^#{1,6}\s/.test(line)) {
+      verbatim = /그대로/.test(line);
+      continue;
+    }
+    if (verbatim) continue;
+    kept.push(line.replace(/"[^"]*"|“[^”]*”|‘[^’]*’|「[^」]*」/g, ''));
+  }
+  return longLines(kept.join('\n'));
+}
+
+/**
+ * 답변에 AI 지시문의 문장이 그대로 들어 있으면 true.
+ * - fixed: 보안 규칙·출력 형식처럼 답변에 나올 일이 없는 고정 지시문. 길고 특징적인 줄(공백 제외 25자 이상) 하나만 나와도 새어 나간 것으로 본다.
+ * - custom: 관리자가 쓴 시스템 프롬프트. 답변 구조·마무리 문구처럼 일부러 답변에 쓰게 한 글이 있으므로,
+ *   그대로 쓰라고 한 부분을 빼고, 서로 다른 줄이 2개 이상 나올 때만 새어 나간 것으로 본다.
+ */
+export function leaksInstructions(answer: string, fixed: string, custom = ''): boolean {
   const a = squash(answer);
   if (a.includes('"answer_type"') || a.includes('cited_qa_ids')) return true;
-  return instructions
-    .split('\n')
-    .map((l) => squash(l.replace(/^[-#*\d.\s]+/, '')))
-    .filter((l) => l.length >= 25)
-    .some((l) => a.includes(l));
+  if (longLines(fixed).some((l) => a.includes(l))) return true;
+  return new Set(promptLinesToGuard(custom).filter((l) => a.includes(l))).size >= 2;
 }
+
+/** 답변 단계에서 막힌 경우의 사유 (질문한 사람의 잘못이 아니므로 하루 보안 횟수에 세지 않는다) */
+export const LEAK_REASON = '지시문 노출 차단';
 
 /** 공격 의심 질문에 돌려주는 안내 (AI를 부르지 않는다) */
 export const BLOCKED_TEXT = [
@@ -69,3 +97,43 @@ export const BLOCKED_TEXT = [
 
 /** 하루에 보안 의심 질문이 이 횟수에 이르면 그날은 더 질문할 수 없다 */
 export const SECURITY_DAILY_STRIKES = 3;
+
+/** 프롬프트에서 답변에 그대로 쓰게 한 글: 제목에 '그대로'가 든 단락의 줄과 따옴표 속 예시 문장 */
+export function verbatimSnippets(prompt: string): string[] {
+  const out: string[] = [];
+  let verbatim = false;
+  for (const raw of prompt.split('\n')) {
+    const line = raw.trim();
+    if (/^#{1,6}\s/.test(line)) {
+      verbatim = /그대로/.test(line);
+      continue;
+    }
+    if (verbatim && line) out.push(line);
+    for (const m of line.matchAll(/"([^"]{10,})"|“([^”]{10,})”/g)) out.push(m[1] ?? m[2]);
+  }
+  return out;
+}
+
+export interface GuardCheckResult {
+  total: number;
+  /** 대표 질의를 그대로 물었을 때 질문 단계에서 막히는 것 */
+  question_blocked: { qa_id: string; question: string; reason: string }[];
+  /** 표준답안 내용 + 프롬프트가 그대로 쓰게 한 글(마무리 문구·예시)로 만든 모의 답변이 답변 단계에서 막히는 것 */
+  answer_blocked: { qa_id: string; question: string }[];
+}
+
+/**
+ * AI를 부르지 않고, 표준답안 전체로 '보안 차단이 잘못 걸리는지'를 미리 점검한다.
+ * 실제 AI 답변은 문장이 달라질 수 있으므로 어림값이며, 0건이 아니면 프롬프트나 차단 규칙을 고쳐야 한다는 신호다.
+ */
+export function guardCheck(items: { qa_id: string; question: string; answer: string }[], fixed: string, prompt: string): GuardCheckResult {
+  const tail = verbatimSnippets(prompt).join('\n');
+  const result: GuardCheckResult = { total: items.length, question_blocked: [], answer_blocked: [] };
+  for (const it of items) {
+    const reason = detectInjection(it.question);
+    if (reason) result.question_blocked.push({ qa_id: it.qa_id, question: it.question, reason });
+    const mock = `■ 질문요지\n- ${it.question}\n\n■ 답변\n${it.answer}\n\n${tail}`;
+    if (leaksInstructions(mock, fixed, prompt)) result.answer_blocked.push({ qa_id: it.qa_id, question: it.question });
+  }
+  return result;
+}

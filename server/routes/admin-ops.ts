@@ -114,6 +114,7 @@ export function adminOpsRoutes(app: FastifyInstance, db: DB) {
     const rows = db
       .prepare(
         `SELECT m.id, m.conversation_id, m.answer_type, m.content, m.created_at, u.username, u.org_name,
+           CASE WHEN json_valid(m.citations) THEN json_extract(m.citations, '$.security') END AS security,
            (SELECT q.content FROM messages q WHERE q.conversation_id = m.conversation_id AND q.role = 'user' AND q.id < m.id
             ORDER BY q.id DESC LIMIT 1) AS question,
            (SELECT f.reason || CASE WHEN f.comment != '' THEN ' - ' || f.comment ELSE '' END FROM feedback f

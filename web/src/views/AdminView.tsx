@@ -504,14 +504,17 @@ function ConversationsTab({ initialUser }: { initialUser: User | null }) {
 // ================= 프롬프트·면책 문구 =================
 
 function PromptTab() {
+  const [draft, setDraft] = useState('');
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-4">
       <SettingEditor
         settingKey="system_prompt"
         title="시스템 프롬프트 (답변 원칙)"
-        help="매 질문마다 AI 모델에 전달되는 기본 지시문입니다. 저장하면 다음 질문부터 바로 적용되며, 이전 버전으로 되돌릴 수 있습니다."
+        help="매 질문마다 AI 모델에 전달되는 기본 지시문입니다. 저장하면 다음 질문부터 바로 적용되며, 이전 버전으로 되돌릴 수 있습니다. 모든 답변에 그대로 붙일 문구는 ‘# 마무리 문구 (모든 답변 끝에 그대로 붙임)’처럼 제목에 ‘그대로’를 넣어 두세요. 그래야 보안 검사가 그 문구를 지시문 유출로 오해하지 않습니다."
         rows={22}
+        onValue={setDraft}
       />
+      <GuardCheckCard draft={draft} />
       <SettingEditor
         settingKey="disclaimer"
         title="고정 면책 문구"
@@ -522,6 +525,71 @@ function PromptTab() {
   );
 }
 
+interface GuardCheck {
+  draft: boolean;
+  total: number;
+  question_blocked: { qa_id: string; question: string; reason: string }[];
+  question_blocked_count: number;
+  answer_blocked: { qa_id: string; question: string }[];
+  answer_blocked_count: number;
+  recent: { answers: number; blocked: { reason: string; n: number }[] };
+}
+
+/** 보안 차단 점검: 표준답안 전체로 '정상 질문이 보안 차단에 걸리는지' AI 호출 없이 미리 본다 */
+function GuardCheckCard({ draft }: { draft: string }) {
+  const [r, setR] = useState<GuardCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function run() {
+    setBusy(true);
+    setError('');
+    try {
+      setR(await api<GuardCheck>('/api/admin/prompt/guard-check', { body: { system_prompt: draft } }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '점검에 실패했습니다.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  const pct = (n: number, d: number) => (d ? `${((n / d) * 100).toFixed(1)}%` : '-');
+  const recentBlocked = r?.recent.blocked.reduce((s, x) => s + x.n, 0) ?? 0;
+  return (
+    <section className="card space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-bold text-slate-800 dark:text-slate-100">보안 차단 점검</h3>
+        <button type="button" className="btn-primary" disabled={busy} onClick={run}>
+          <Lock className="h-4 w-4" /> {busy ? '점검 중…' : '편집 중인 프롬프트로 점검'}
+        </button>
+      </div>
+      <p className="text-xs text-slate-500 dark:text-slate-400">
+        서비스 중인 표준답안의 대표 질의를 모두 넣어, 정상 질문이 ‘운영 규칙·내부 자료 요청’으로 잘못 막히는지 AI를 부르지 않고 미리 봅니다. ① 질문 단계: 공격 문구 검사 ② 답변 단계:
+        표준답안 내용과 프롬프트가 그대로 쓰게 한 문구(마무리 문구·예시)로 만든 모의 답변을 지시문 유출 검사에 통과시킵니다. 실제 AI 답변은 문장이 달라질 수 있어 어림값입니다.
+      </p>
+      {error && <Notice kind="error">{error}</Notice>}
+      {r && (
+        <div className="space-y-2 text-sm">
+          <Notice kind={r.question_blocked_count + r.answer_blocked_count === 0 ? 'success' : 'error'}>
+            표준답안 {r.total}건 중 잘못 막힐 수 있는 것: 질문 단계 <b>{r.question_blocked_count}건</b>, 답변 단계 <b>{r.answer_blocked_count}건</b>
+            {r.draft ? ' (편집 중인 내용 기준)' : ''}
+          </Notice>
+          {[...r.question_blocked.map((x) => ({ ...x, stage: `질문 단계 · ${x.reason}` })), ...r.answer_blocked.map((x) => ({ ...x, stage: '답변 단계' }))]
+            .slice(0, 50)
+            .map((x) => (
+              <div key={`${x.stage}-${x.qa_id}`} className="text-xs text-slate-600 dark:text-slate-300">
+                <span className="font-mono">{x.qa_id}</span> · {x.stage} · {x.question}
+              </div>
+            ))}
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            최근 30일 실제 답변 {r.recent.answers}건 중 보안 차단 {recentBlocked}건 ({pct(recentBlocked, r.recent.answers)})
+            {r.recent.blocked.length > 0 && ` — ${r.recent.blocked.map((b) => `${b.reason} ${b.n}건`).join(', ')}`}. 하나씩 보려면 관리 → 답변 모아보기 → ‘보안 의심’, 막힌
+            AI 원래 답변은 감사 로그의 ‘답변 차단(지시문 노출 의심)’에 있습니다.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function SettingEditor({
   settingKey,
   title,
@@ -529,6 +597,7 @@ export function SettingEditor({
   rows,
   initialDraft,
   allowEmpty = false,
+  onValue,
 }: {
   settingKey: string;
   title: string;
@@ -537,8 +606,14 @@ export function SettingEditor({
   /** 파일에서 불러온 내용처럼, 저장 전 편집기에 미리 채워 둘 값 */
   initialDraft?: string;
   allowEmpty?: boolean;
+  /** 편집 중인 내용이 바뀔 때마다 알려 준다 (저장 전 점검용) */
+  onValue?: (v: string) => void;
 }) {
-  const [value, setValue] = useState('');
+  const [value, setValueState] = useState('');
+  const setValue = (v: string) => {
+    setValueState(v);
+    onValue?.(v);
+  };
   const [saved, setSaved] = useState('');
   const [revisions, setRevisions] = useState<SettingRevision[]>([]);
   const [showHistory, setShowHistory] = useState(false);
