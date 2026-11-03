@@ -29,7 +29,7 @@ export function createClaudeClient(
     });
 
     if (response.stop_reason === 'refusal') {
-      throw new LlmError('AI 모델이 이 질문에 대한 답변을 거절했습니다. 질문을 바꾸거나 담당자에게 문의해 주세요.');
+      throw new LlmError('AI 모델이 이 질문에 대한 답변을 거절했습니다. 질문을 바꾸거나 답변 아래 ‘재단에 문의하기’를 이용해 주세요.');
     }
     const text = response.content
       .map((block) => (block.type === 'text' ? block.text : ''))

@@ -1,7 +1,6 @@
-import { BookPlus, CheckSquare, CornerDownRight, Inbox, Plus } from 'lucide-react';
+import { BookPlus, CheckSquare, CornerDownRight, Inbox } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, formatTime, type Inquiry, type User } from '../api';
-import { InquiryModal } from '../components/InquiryModal';
 import { Notice } from '../components/ui';
 import { QaEditorModal } from './ReviewView';
 
@@ -11,7 +10,6 @@ export function InquiriesView({ user, onChanged }: { user: User; onChanged: () =
   const canManage = user.role !== 'user';
   const [tab, setTab] = useState<Tab>(canManage ? 'pending' : 'mine');
   const [items, setItems] = useState<Inquiry[]>([]);
-  const [writing, setWriting] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -46,9 +44,6 @@ export function InquiriesView({ user, onChanged }: { user: User; onChanged: () =
           <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800 dark:text-slate-100">
             <Inbox className="h-5 w-5 text-indigo-500" /> 1:1 문의함
           </h2>
-          <button type="button" className="btn-primary" onClick={() => setWriting(true)}>
-            <Plus className="h-4 w-4" /> 새 문의
-          </button>
         </div>
         {tabs.length > 1 && (
           <div className="flex gap-1 rounded-lg bg-slate-200 p-1 dark:bg-slate-800">
@@ -64,24 +59,15 @@ export function InquiriesView({ user, onChanged }: { user: User; onChanged: () =
             ))}
           </div>
         )}
+        {tab === 'mine' && (
+          <Notice kind="info">재단 문의는 챗봇에 먼저 질문한 뒤, 답변 아래 ‘재단에 문의하기’로 남길 수 있습니다. 챗봇 대화가 함께 첨부되어 담당자가 상황을 바로 알 수 있습니다.</Notice>
+        )}
         <Notice>{error}</Notice>
-        {items.length === 0 && !error && <p className="py-10 text-center text-sm text-slate-400">문의가 없습니다.</p>}
+        {items.length === 0 && !error && <p className="py-10 text-center text-sm text-slate-400">{tab === 'mine' ? '남긴 문의가 없습니다.' : '문의가 없습니다.'}</p>}
         {items.map((i) => (
           <InquiryCard key={i.id} item={i} canAnswer={canManage && tab !== 'mine'} onAnswered={() => { load(); onChanged(); }} />
         ))}
       </div>
-      {writing && (
-        <InquiryModal
-          conversationId={null}
-          onClose={() => setWriting(false)}
-          onSent={() => {
-            setWriting(false);
-            setTab('mine');
-            load();
-            onChanged();
-          }}
-        />
-      )}
     </div>
   );
 }

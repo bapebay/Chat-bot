@@ -17,7 +17,7 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   const [error, setError] = useState('');
   const [limitReached, setLimitReached] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
-  const [inquiryFor, setInquiryFor] = useState<{ conversationId: number | null; text: string } | null>(null);
+  const [inquiryFor, setInquiryFor] = useState<{ conversationId: number; text: string } | null>(null);
   const [inquiryDone, setInquiryDone] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -269,7 +269,7 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
               messages={messages}
               feedback={feedback}
               onFeedback={sendFeedback}
-              onAskStaff={() => setInquiryFor({ conversationId: current?.id ?? null, text: '' })}
+              onAskStaff={current ? () => setInquiryFor({ conversationId: current.id, text: '' }) : undefined}
             />
             {pendingQuestion && (
               <>
@@ -294,9 +294,12 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
                       다시 시도
                     </button>
                   )}
-                  <button type="button" className="btn-secondary" onClick={() => setInquiryFor({ conversationId: current?.id ?? null, text: input })}>
-                    담당자에게 문의
-                  </button>
+                  {/* 재단 문의는 챗봇 답변을 받은 대화에서만 (챗봇을 거치지 않은 바로 문의 방지) */}
+                  {current && messages.some((m) => m.role === 'assistant') && (
+                    <button type="button" className="btn-secondary" onClick={() => setInquiryFor({ conversationId: current.id, text: input })}>
+                      재단에 문의하기
+                    </button>
+                  )}
                 </div>
               </div>
             )}
