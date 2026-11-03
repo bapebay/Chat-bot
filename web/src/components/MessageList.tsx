@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Check, ChevronDown, Copy, FileText, MessageSquareQuote, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
+import { Bot, Check, Copy, MessageSquareQuote, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
 import { parseCitations, type Citations, type Message } from '../api';
 import { Markdown } from './ui';
@@ -22,12 +22,10 @@ function plainText(md: string): string {
     .trim();
 }
 
-/** 지역센터가 대학에 회신할 때 그대로 붙여 쓰도록: 본문 + 마무리 안내 + 관련 지침 + 면책 문구 */
-function copyText(body: string, closing: string, c: Citations | null, disclaimer: string): string {
+/** 지역센터가 대학에 회신할 때 그대로 붙여 쓰도록: 본문 + 마무리 안내 + 면책 문구 (근거 카드는 없앰) */
+function copyText(body: string, closing: string, disclaimer: string): string {
   const parts = [plainText(body)];
   if (closing) parts.push(closing);
-  const refs = (c?.guideline ?? []).map((g) => `${g.doc_name} ${g.clause}${g.page ? ` ${g.page}쪽` : ''}`);
-  if (refs.length) parts.push(`[관련 지침] ${refs.join(', ')}`);
   if (disclaimer) parts.push(disclaimer.trim());
   return parts.join('\n\n');
 }
@@ -193,12 +191,11 @@ function AssistantMessage({
         <div className="card rounded-tl-sm p-4">
           <Markdown text={body} />
           {closing && <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{closing}</p>}
-          {c && <Evidence c={c} />}
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 px-1 text-xs text-slate-400">
           {onFeedback && <FeedbackButtons current={feedback} onSubmit={(f) => onFeedback(m.id, f)} />}
-          {!c?.security && <CopyButton text={copyText(body, closing, c, disclaimer)} />}
+          {!c?.security && <CopyButton text={copyText(body, closing, disclaimer)} />}
           {onAskStaff && !c?.security && (
             <button type="button" onClick={onAskStaff} className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-300" title="이 답변으로 해결되지 않으면 대화 기록을 첨부해 재단에 문의합니다">
               <MessageSquareQuote className="h-3.5 w-3.5" /> 재단에 문의하기
@@ -264,43 +261,3 @@ function closingLine(body: string, referral: string | null): string {
   return TARGET_WORD[target].test(tail) && /(문의|확인|협의)/.test(tail) ? '' : TARGET_GUIDE[target];
 }
 
-/** 답변 아래 근거: 관련 지침 조항만 보여준다 (표준답안 질의·답변 원문은 보여주지 않음, 점검표 결정) */
-function Evidence({ c }: { c: Citations }) {
-  if (!c.guideline.length) return null;
-  return (
-    <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-700">
-      <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-        <BookOpen className="h-3.5 w-3.5" /> 관련 지침 ({c.guideline.length})
-      </div>
-      <div className="space-y-2">
-        {c.guideline.map((g) => (
-          <EvidenceCard
-            key={g.id}
-            icon={<FileText className="h-4 w-4 shrink-0 text-emerald-600" />}
-            title={g.clause}
-            meta={[g.doc_kind, g.doc_name, g.page ? `${g.page}쪽` : ''].filter(Boolean).join(' · ')}
-          >
-            <p className="whitespace-pre-wrap">{g.text}</p>
-          </EvidenceCard>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function EvidenceCard({ icon, title, meta, children }: { icon: React.ReactNode; title: React.ReactNode; meta: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
-      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-start gap-2 p-2.5 text-left">
-        <span className="mt-0.5">{icon}</span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm text-slate-800 dark:text-slate-100">{title}</span>
-          {meta && <span className="block text-[11px] text-slate-500 dark:text-slate-400">{meta}</span>}
-        </span>
-        <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && <div className="border-t border-slate-200 p-3 text-xs leading-relaxed text-slate-700 dark:border-slate-700 dark:text-slate-300">{children}</div>}
-    </div>
-  );
-}
