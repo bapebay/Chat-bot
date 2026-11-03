@@ -4,7 +4,7 @@ import { buildApp } from './app.js';
 import { hashPassword } from './auth.js';
 import { buildSystemPrompt } from './chat.js';
 import { openDatabase } from './db.js';
-import { detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from './knowledge/guard.js';
+import { detectInjection, leaksInstructions, publicRefs, SECURITY_DAILY_STRIKES } from './knowledge/guard.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { activateQaVersion, createQaDraft } from './knowledge/store.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
@@ -183,4 +183,17 @@ test('보안 차단 점검: 표준답안 전체로 잘못된 차단을 미리 �
   const { app: app2 } = await setup(okAnswer);
   const res = await app2.inject({ method: 'POST', url: '/api/admin/prompt/guard-check', payload: {} });
   assert.ok([401, 403].includes(res.statusCode));
+});
+
+test('답변 속 내부 꼬리표(G1·P1)는 사용자용 말로 바꾼다', () => {
+  const t = [
+    '- 지침 및 FAQ G2에 따르면 RBD 비용은 준용합니다.',
+    '- [지침 및 FAQ G1] 30. 보직수당의 지급 대상은 어떻게 되나요?',
+    '- [집행원리 P1] 회의비 원칙',
+    '- [유사 질의응답 사례]',
+  ].join('\n');
+  assert.equal(
+    publicRefs(t, ['FAQ', '지침']),
+    ['- 지침에 따르면 RBD 비용은 준용합니다.', '- [FAQ] 30. 보직수당의 지급 대상은 어떻게 되나요?', '- [질의응답 사례상 일반 원칙] 회의비 원칙', '- [유사 질의응답 사례]'].join('\n'),
+  );
 });

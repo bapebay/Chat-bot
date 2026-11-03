@@ -7,7 +7,7 @@ import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS, SECURITY_RULES } from '../.
 import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/accounts-excel';
 import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
-import { BLOCKED_TEXT, detectInjection, guardCheck, LEAK_REASON, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
+import { BLOCKED_TEXT, detectInjection, guardCheck, publicRefs, LEAK_REASON, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { combineQaFiles, isQaMarkdown, MAX_QA_FILES, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
 import { parsePrinciplesCsv, principleContext, principleSearchText } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
@@ -435,7 +435,7 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   else if (!referral) referral = answerType === '연결형' ? '지역앵커센터' : '담당자';
   return {
     ...usage,
-    text: json.answer_markdown.trim(),
+    text: publicRefs(json.answer_markdown.trim(), r.guideline.map((h: Json) => h.doc.doc_kind)),
     answerType,
     model: true,
     r,
