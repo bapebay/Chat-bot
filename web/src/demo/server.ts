@@ -10,7 +10,7 @@ import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { parsePrinciplesCsv } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
-import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
+import { chunkDocument, chunkTextFile, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
 import { DEMO_GUIDELINE_TEXT, REGIONS_17, type DemoQa } from './data';
 // 데모 기본 표준답안: 관리자가 올린 '중복질의_통합_표준답안초안_5차' (요청에 따라 기본값으로 내장)
@@ -971,7 +971,6 @@ async function readFile(body: Json, exts: RegExp) {
 }
 const asBuffer = (b: ArrayBuffer) => b as unknown as Parameters<typeof parseQaWorkbook>[0];
 const bad = (e: unknown) => new HttpError(400, (e as Error).message);
-const textOf = (b: ArrayBuffer) => new TextDecoder('utf-8').decode(b);
 
 route('POST', '/api/admin/knowledge/qa/upload', 'admin', async ({ body }) => {
   const f = await readFile(body, /\.xlsx$/i);
@@ -994,10 +993,10 @@ route('POST', '/api/admin/knowledge/qa/upload', 'admin', async ({ body }) => {
   return versionRow(v);
 });
 route('POST', '/api/admin/knowledge/guidelines/upload', 'admin', async ({ body }) => {
-  const f = await readFile(body, /\.(pdf|txt|md)$/i);
+  const f = await readFile(body, /\.(pdf|txt|md|markdown)$/i);
   let chunks;
   try {
-    chunks = /\.pdf$/i.test(f.name) ? chunkDocument(await extractPdfPages(asBuffer(f.buf)), true) : chunkDocument([textOf(f.buf)], false);
+    chunks = /\.pdf$/i.test(f.name) ? chunkDocument(await extractPdfPages(asBuffer(f.buf)), true) : chunkTextFile(new Uint8Array(f.buf), f.name);
   } catch (e) {
     throw bad(e);
   }

@@ -427,10 +427,10 @@ function GuidelineSection({ onChanged }: { onChanged: () => void }) {
         <div className="grid gap-3 sm:grid-cols-[1fr_140px_auto]">
           <input className="input" placeholder="문서 이름 (예: 앵커 사업비 집행 및 관리 지침 2026.3.)" value={name} onChange={(e) => setName(e.target.value)} />
           <Select value={kind} onChange={setKind} options={['지침', 'FAQ']} />
-          <FilePicker accept=".pdf,.txt,.md" label="파일 올리기" busy={busy} onFile={upload} />
+          <FilePicker accept=".pdf,.txt,.md,.markdown" label="파일 올리기" busy={busy} onFile={upload} />
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          PDF·TXT·MD (15MB 이하). 한글(HWP) 파일은 PDF로 저장해 올려 주세요. ‘제N조’, ‘1.’, ‘가.’, ‘Q.’ 같은 머리를 기준으로 조항을 나누고 쪽수를 함께 저장합니다. 개정판을 올리면 이전 판은 ‘사용 중지’해 두세요.
+          PDF·TXT·MD(마크다운) (15MB 이하). 한글(HWP) 파일은 PDF나 MD로 바꿔 올려 주세요. ‘제N조’, ‘1.’, ‘가.’, ‘Q.’ 같은 머리를 기준으로 조항을 나누고 쪽수를 함께 저장합니다. MD는 ‘#’ 제목도 조항 머리로 쓰고, 표·굵은 글씨 같은 꾸밈 기호는 걷어 내며, {'‘<!-- page 3 -->’'} 같은 쪽 표시가 있으면 쪽수로 씁니다. 개정판을 올리면 이전 판은 ‘사용 중지’해 두세요.
         </p>
         {message && <Notice kind={message.kind}>{message.text}</Notice>}
       </section>

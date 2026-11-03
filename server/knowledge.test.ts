@@ -5,7 +5,7 @@ import { buildApp } from './app.js';
 import { hashPassword } from './auth.js';
 import { openDatabase } from './db.js';
 import type { Embedder } from './knowledge/embedder.js';
-import { chunkDocument } from './knowledge/guideline.js';
+import { chunkDocument, chunkMarkdown, chunkTextFile } from './knowledge/guideline.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import { findPii, maskPii } from './knowledge/text.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
@@ -218,4 +218,44 @@ test('의미 검색 모델이 있으면 혼합 검색으로 동작', async () =>
   assert.equal(r.qa[0].doc.qa_id, 'C2-03-a');
   assert.equal(typeof r.qa[0].semantic, 'number');
   assert.ok((db.prepare('SELECT COUNT(*) AS n FROM embeddings').get() as { n: number }).n > 0);
+});
+
+test('마크다운 지침: # 제목·조문 머리로 나누고, 표·꾸밈 기호를 걷어 내며, 쪽 표시와 CP949도 읽는다', () => {
+  const md = [
+    '---',
+    'title: 사업비 지침',
+    '---',
+    '# 제1장 총칙',
+    '<!-- page 3 -->',
+    '## 제5조(인건비) 인건비는 **상한 이내**로 편성한다.',
+    '1. 과제책임자 수당은 [별표 1](http://x)에 따른다.',
+    '2. 참여율은 *100%* 를 넘을 수 없다 &#91;별표&#93; &amp; 부칙.',
+    '',
+    '| 구분 | 한도 |',
+    '| --- | ---: |',
+    '| 1. 보직수당 | 월 50만원 |',
+    '<!-- page 4 -->',
+    '### 회의비 집행 기준',
+    '> 회의비는 `1인당` 기준 단가 안에서 집행한다.',
+    '- Q1. 주류 구입 가능? A. 불가',
+  ].join('\n');
+  const chunks = chunkTextFile(Buffer.from(md, 'utf8'), '지침.md');
+  assert.deepEqual(chunks.map((c) => [c.clause, c.page]), [
+    ['제1장', null],
+    ['제5조(인건비)', 3],
+    ['회의비 집행 기준', 4],
+    ['Q1. 주류 구입 가능? A. 불가', 4],
+  ]);
+  const art = chunks[1].text;
+  assert.match(art, /상한 이내로 편성한다/);
+  assert.match(art, /1\. 과제책임자 수당은 별표 1에 따른다/);
+  assert.match(art, /참여율은 100% 를 넘을 수 없다 \[별표\] & 부칙/);
+  assert.match(art, /구분 · 한도\n1\. 보직수당 · 월 50만원/);
+  assert.doesNotMatch(chunks.map((c) => c.text).join('\n'), /\*\*|\]\(|\| ---|<!--|title:|`/);
+  assert.match(chunks[2].text, /^회의비 집행 기준\n회의비는 1인당/);
+  // 제목(#)이 없는 MD는 일반 글처럼 '1.' 등으로도 나눈다
+  assert.equal(chunkMarkdown('1. 적용 범위\n본문\n2. 정의\n본문').length, 2);
+  // 한글 윈도 기본 저장(CP949) TXT도 읽는다
+  const cp949 = Buffer.from([0xc1, 0xa6, 0x31, 0xc1, 0xb6, 0x28, 0xb8, 0xf1, 0xc0, 0xfb, 0x29]); // 제1조(목적)
+  assert.equal(chunkTextFile(cp949, 'a.txt')[0].clause, '제1조(목적)');
 });

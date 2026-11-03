@@ -144,7 +144,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   app.get('/api/admin/knowledge/guidelines', { preHandler: admin }, async () => listGuidelineDocs(db));
 
   app.post('/api/admin/knowledge/guidelines/upload', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.(pdf|txt|md)$/i);
+    const up = await readUpload(req, reply, /\.(pdf|txt|md|markdown)$/i);
     if (!up) return;
     const kind = up.fields.kind === 'FAQ' ? 'FAQ' : '지침';
     const name = (up.fields.name || up.filename.replace(/\.[^.]+$/, '')).trim().slice(0, 100);
