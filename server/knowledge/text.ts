@@ -23,18 +23,66 @@ function stripSuffix(w: string): string {
   return w;
 }
 
-// 질문에만 흔히 나오는 의문사 묶음은 검색어에서 뺀다
-export const QUERY_STOP_TOKENS = new Set(['얼마', '어떻', '떻게', '무엇', '어떤', '어느', '언제', '어디', '궁금', '금합', '알려', '려주', '주세', '세요', '문의', '질문', '경우']);
+// 질문에만 흔히 나오는 의문사·말끝 묶음은 검색어에서 뺀다
+// (구어체 말끝 '받을수 있셈?', '되냐', '해줘' 등이 '자료에 없는 낱말'로 잡혀 근거 판정을 떨어뜨리지 않게)
+export const QUERY_STOP_TOKENS = new Set([
+  '얼마', '어떻', '떻게', '무엇', '어떤', '어느', '언제', '어디', '궁금', '금합', '알려', '려주', '주세', '세요', '문의', '질문', '경우',
+  '있셈', '있음', '있어', '있냐', '있니', '있죠', '을수', '할수', '되냐', '되니', '되죠', '려줘', '해줘', '줘요', '건가', '는건', '할래', '나요', '가요',
+]);
+
+/** 검색용 낱말 목록 (조사·어미를 떼고, 한 글자 낱말은 버림) */
+export function words(text: string): string[] {
+  // 한 글자 단어(제, 로, 수 …)는 대부분 조사·대명사라 버린다
+  return (normalize(text).match(/[\p{L}\p{N}]+/gu) ?? []).map(stripSuffix).filter((w) => w.length > 1);
+}
+
+export function bigrams(word: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < word.length - 1; i++) out.push(word.slice(i, i + 2));
+  return out;
+}
 
 export function tokenize(text: string): string[] {
-  const words = (normalize(text).match(/[\p{L}\p{N}]+/gu) ?? []).map(stripSuffix);
-  const out: string[] = [];
-  for (const w of words) {
-    // 한 글자 단어(제, 로, 수 …)는 대부분 조사·대명사라 버린다
-    if (w.length === 1) continue;
-    for (let i = 0; i < w.length - 1; i++) out.push(w.slice(i, i + 2));
+  return words(text).flatMap(bigrams);
+}
+
+// ----- 같은 뜻 다른 말 (질문 낱말과 자료 낱말이 달라 근거를 못 찾는 경우) -----
+// 실제 자료(표준답안·지침·집행원리)에 많이 쓰인 말을 함께 찾는다. 예: 자료에는 '출장비'보다 '여비'가 훨씬 많다.
+// 한 줄 = 같은 뜻의 말 묶음. 질문에 어느 하나가 있으면 나머지로 바꾼 질문으로도 찾아 가장 잘 맞는 결과를 쓴다.
+export const SYNONYM_GROUPS: string[][] = [
+  ['출장비', '여비', '출장여비'],
+  ['결재', '품의'],
+  ['사전결재', '사전품의'],
+  ['과제책임자', '연구책임자'],
+  ['부서책임자', '부서장'],
+  ['강사비', '강사료'],
+  ['회의경비', '회의비'],
+  ['밥값', '식비', '식대'],
+  ['기자재', '장비'],
+  ['내년', '차년도', '다음연도'],
+  ['남은돈', '잔액', '집행잔액'],
+  ['해외', '국외'],
+  ['자문비', '자문료'],
+  ['인센티브', '성과급'],
+  ['RISE', '앵커'],
+];
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// 낱말 사이 띄어쓰기는 있어도 없어도 같게 본다 ('과제 책임자' = '과제책임자')
+const loose = (term: string) => new RegExp([...term].map(escapeRe).join('\\s*'), 'gi');
+
+/** 질문과, 같은 뜻의 다른 말로 바꾼 질문들 (원문이 맨 앞, 최대 4개) */
+export function queryVariants(query: string): string[] {
+  const variants = [query];
+  for (const group of SYNONYM_GROUPS) {
+    const found = group.find((t) => loose(t).test(query));
+    if (!found) continue;
+    for (const alt of group) {
+      if (alt === found || variants.length >= 4) continue;
+      variants.push(query.replace(loose(found), alt));
+    }
   }
-  return out;
+  return variants;
 }
 
 // ----- 개인정보 패턴 (전화번호·이메일·주민등록번호·계좌번호) -----

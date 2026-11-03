@@ -9,6 +9,7 @@ import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, guardCheck, publicRefs, LEAK_REASON, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { combineQaFiles, isQaMarkdown, MAX_QA_FILES, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
+import { parseRewrite, REWRITE_SYSTEM, worthRewriting } from '../../../server/knowledge/rewrite';
 import { parsePrinciplesCsv, principleContext, principleSearchText } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, chunkTextFile, extractPdfPages } from '../../../server/knowledge/guideline';
@@ -193,9 +194,12 @@ function search(query: string, businessType: string) {
     return [...sorted.filter((h) => h.relevant), ...sorted.filter((h) => !h.relevant && h.keyword >= tk * 0.6)].slice(0, k);
   };
   const qaHits = pick(qa, num('top_k_qa'));
-  const gHits = pick(rank(guides, guides.map((g) => `${g.clause}\n${g.text}`), query, tk), num('top_k_guideline'));
   const prs = activePrinciples();
-  const pHits = pick(rank(prs, prs.map((p) => principleSearchText(p)), query, tk), 4);
+  const gAll = rank(guides, guides.map((g) => `${g.clause}\n${g.text}`), query, tk);
+  const gHits = pick(gAll, num('top_k_guideline'));
+  const pAll = rank(prs, prs.map((p) => principleSearchText(p)), query, tk);
+  const bestKeyword = Math.max(0, ...[...qa, ...gAll, ...pAll].map((h) => h.keyword));
+  const pHits = pick(pAll, 4);
   const oos = rank(outOfScope, outOfScope.map((o) => o.question), query, tk).sort((a, b) => b.score - a.score)[0];
   return {
     qa: qaHits,
@@ -204,6 +208,8 @@ function search(query: string, businessType: string) {
     outOfScope: oos && oos.relevant ? oos : null,
     passed: qaHits.some((h) => h.relevant) || gHits.some((h) => h.relevant) || pHits.some((h) => h.relevant),
     mode: 'keyword' as const,
+    // 서버와 같게: 근거 미달일 때 AI로 다시 찾을지 판단용
+    bestKeyword,
   };
 }
 
@@ -220,7 +226,7 @@ function overlapsEvidence(query: string, r: Json): boolean {
 
 // ================= 테스트 모델 답변 =================
 /** AI 대신 검색된 표준답안 내용으로 답을 만든다 (서버의 근거 판정·유형 규칙은 같게) */
-function generateAnswer(history: Json[], businessType: string, question: string) {
+function generateAnswer(history: Json[], businessType: string, question: string, rewritten: string[] = []) {
   const query = question.replace(/\[(?:전화번호|이메일|주민등록번호|계좌번호)\]/g, ' ');
   let r = search(query, businessType);
   // 서버와 같은 규칙: 한 메시지에 질문이 여럿이면 하나씩 찾아 근거를 합친다
@@ -247,11 +253,24 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     if (!retry.passed && followUp) retry = search(prevQ, businessType);
     if (retry.passed && (followUp || overlapsEvidence(query, retry))) r = retry;
   }
+  // 서버와 같은 규칙: AI가 지침 용어로 바꿔 준 검색 문장으로 다시 찾기 (answerWithAi가 넘겨줌)
+  if (!r.passed && rewritten.length) {
+    const again = rewritten.map((q) => search(q, businessType));
+    if (again.some((x) => x.passed)) {
+      r = mergeSearchResults(r, again, { qa: (h: Json) => h.doc.id, guideline: (h: Json) => h.doc.id, principle: (h: Json) => h.doc.id }, {
+        perPart: 3,
+        maxQa: num('top_k_qa'),
+        maxGuide: num('top_k_guideline'),
+        maxPrinciple: 4,
+      });
+    }
+  }
   const retrieved = {
     mode: r.mode,
     qa: r.qa.map((h: Json) => ({ qa_id: h.doc.qa_id, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
     guideline: r.guideline.map((h: Json, i: number) => ({ id: `G${i + 1}`, clause: h.doc.clause, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
     principle: r.principle.map((h: Json, i: number) => ({ id: `P${i + 1}`, code: h.doc.code, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
+    ...(rewritten.length ? { rewritten } : {}),
   };
   const base = { business_type: null, referral: null as string | null, qa: [] as Json[], guideline: [] as Json[], out_of_scope: null as Json, retrieved };
   const best = Math.max(r.qa.find((h: Json) => h.relevant)?.keyword ?? 0, r.guideline.find((h: Json) => h.relevant)?.keyword ?? 0, r.principle.find((h: Json) => h.relevant)?.keyword ?? 0);
@@ -287,19 +306,23 @@ function generateAnswer(history: Json[], businessType: string, question: string)
   const citedGuide = g >= 0 ? [{ ...r.guideline[g].doc, id: `G${g + 1}` }] : [];
   // 표준답안이 없으면 집행원리 문장으로 안내 (집행원리 번호는 밖에 보이지 않는다)
   const relPrinciple = citedQa.length ? [] : r.principle.filter((h: Json) => h.relevant).slice(0, 2).map((h: Json) => h.doc);
+  // 실제 AI와 같은 답변 구조(■ 질문요지 → ■ 답변 → ■ 세부내용)로 보여 준다. 세부내용은 화면에서 접혀 있다
+  const firstSentence = (t: string) => (t.match(/^[\s\S]*?(?:다\.|요\.)(?=\s|$)/)?.[0] ?? t).trim();
+  const details = [
+    ...citedQa.map((q: Json) => q.answer),
+    ...relPrinciple.flatMap((p: Json) => [p.text, ...(p.caution ? [`예외·유의점: ${p.caution}`] : []), ...(p.basis ? [`근거: ${p.basis}`] : [])]),
+    ...(citedQa.length || relPrinciple.length ? [] : citedGuide.map((c: Json) => c.text.split('\n').slice(1).join(' '))),
+  ].filter(Boolean);
   const lines = [
-    `**질의 요약**: ${question.slice(0, 100)}`,
+    '■ 질문요지',
+    `- ${question.slice(0, 100)}`,
     '',
-    referral
-      ? `**답변 요약**: 지역앵커센터 확인이 필요한 사항입니다. 아래 원칙을 참고하세요.`
-      : `**답변 요약**: ${citedQa.length ? `표준답안 ${citedQa.map((q: Json) => q.qa_id).join(', ')}` : relPrinciple.length ? '사업비 집행 원칙' : '지침 조항'}에 근거해 안내합니다.`,
+    '■ 답변',
+    referral ? '- 개별 사안에 따라 달라 **소속 지역앵커센터 확인**이 필요한 사항입니다.' : `- ${firstSentence(details[0] ?? '관련 원칙을 안내합니다.')}`,
     '',
-    '**상세 안내**',
-    ...citedQa.map((q: Json) => `- ${q.answer}`),
-    ...relPrinciple.flatMap((p: Json) => [`- ${p.text}`, ...(p.caution ? [`  - 예외·유의점: ${p.caution}`] : []), ...(p.basis ? [`  - 근거: ${p.basis}`] : [])]),
-    ...(citedQa.length || relPrinciple.length ? [] : citedGuide.map((c: Json) => `- ${c.text.split('\n').slice(1).join(' ')}`)),
-    '',
-    '**유의사항**: (데모) 이 페이지는 실제 AI 대신 테스트 모델이 검색된 표준답안 문장을 그대로 보여줍니다. 실제 서비스에서는 AI가 질문 상황에 맞춰 문장을 다시 씁니다.',
+    '■ 세부내용',
+    ...details.map((d: string) => `- ${d}`),
+    '- (데모) 실제 AI 대신 테스트 모델이 찾은 자료 문장을 그대로 보여 줍니다. 실제 서비스에서는 AI가 질문에 맞춰 다시 쓰고 핵심 단어를 굵게 표시합니다.',
   ];
   const text = lines.join('\n');
   return {
@@ -389,7 +412,17 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   // 서버와 같은 1겹 방어: 대놓고 하는 공격 문구는 AI를 부르지 않는다
   const attack = detectInjection(question);
   if (attack) return blockedAnswer(attack);
-  const t = generateAnswer(history, businessType, question);
+  let t = generateAnswer(history, businessType, question);
+  // 서버와 같은 규칙: 못 찾았지만 비슷한 후보가 있으면 AI가 지침 용어로 바꾼 검색 문장으로 다시 찾는다
+  if (ai && !t.model && t.answerType === '근거없음' && worthRewriting(t.r)) {
+    try {
+      const { text } = await ai(`${REWRITE_SYSTEM}\n\n[질문]\n${question}`, { cache: false, modelTier: settings.demo_model_tier });
+      const rewritten = parseRewrite(text);
+      if (rewritten.length) t = generateAnswer(history, businessType, question, rewritten);
+    } catch {
+      // 다시 찾기는 덤이므로 실패해도 원래 결과대로
+    }
+  }
   const testResult = { ...t, provider: 'demo', modelName: 'test-model', latency: 900 + Math.round(Math.random() * 600) };
   if (!t.model || !ai) return testResult;
   const r = t.r;
