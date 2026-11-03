@@ -87,7 +87,7 @@ test('가입 → 승인 전 로그인 불가 → 승인 후 질문·답변', asy
   assert.equal((await app.inject({ url: '/api/admin/users', headers: { cookie: user } })).statusCode, 403);
 });
 
-test('10회 실패 시 잠금, 관리자가 해제', async () => {
+test('10회 실패 시 15분 잠금, 시간이 지나면 저절로 풀림', async () => {
   const { app, db } = await setup();
   await app.inject({ method: 'POST', url: '/api/auth/signup', payload: signup });
   db.prepare(`UPDATE users SET status = 'approved' WHERE username = 'univ01'`).run();
@@ -97,7 +97,9 @@ test('10회 실패 시 잠금, 관리자가 해제', async () => {
 
   const admin = cookieOf(await login(app, 'admin', 'adminpass1'));
   const id = (db.prepare(`SELECT id FROM users WHERE username = 'univ01'`).get() as { id: number }).id;
-  await app.inject({ method: 'POST', url: `/api/admin/users/${id}/unlock`, headers: { cookie: admin } });
+  // 관리자 해제 없이, 잠금 시각이 지나면 다시 로그인된다
+  assert.equal((await app.inject({ method: 'POST', url: `/api/admin/users/${id}/unlock`, headers: { cookie: admin } })).statusCode, 404);
+  db.prepare(`UPDATE users SET locked_until = datetime('now', '-1 minutes') WHERE id = ?`).run(id);
   assert.equal((await login(app, 'univ01', 'userpass1')).statusCode, 200);
 });
 

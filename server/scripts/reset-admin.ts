@@ -20,7 +20,7 @@ if (!user || user.role !== 'admin') {
 
 const temp = generateTempPassword();
 db.prepare(
-  `UPDATE users SET password_hash = ?, must_change_password = 1, locked = 0, failed_attempts = 0, status = 'approved' WHERE id = ?`,
+  `UPDATE users SET password_hash = ?, must_change_password = 1, locked = 0, failed_attempts = 0, locked_until = NULL, status = 'approved' WHERE id = ?`,
 ).run(hashPassword(temp), user.id);
 deleteUserSessions(db, user.id);
 console.log(`'${username}' 계정의 잠금을 풀고 임시 비밀번호를 발급했습니다: ${temp}`);

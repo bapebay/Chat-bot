@@ -1,6 +1,6 @@
-import { BookOpen, Bot, Check, ChevronDown, Copy, FileText, MessageSquareQuote, Share2, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
+import { BookOpen, Bot, Check, ChevronDown, Copy, FileText, MessageSquareQuote, ThumbsDown, ThumbsUp, User as UserIcon } from 'lucide-react';
 import { useState } from 'react';
-import { formatTime, parseCitations, type AnswerType, type Citations, type Message } from '../api';
+import { parseCitations, type Citations, type Message } from '../api';
 import { Markdown } from './ui';
 
 export interface Feedback {
@@ -10,9 +10,6 @@ export interface Feedback {
 }
 
 const BAD_REASONS = ['틀린 내용', '답이 부족', '근거가 엉뚱함', '연결이 부적절'];
-
-/** '2026-10-30 01:23:45'(UTC) → '2026. 10. 30.' 처럼 날짜만 */
-const dateOnly = (utc: string | null) => formatTime(utc).replace(/\s*(오전|오후).*$/, '');
 
 /** 마크다운 기호를 빼서 메일·공문에 붙여 넣기 좋은 글로 */
 function plainText(md: string): string {
@@ -25,15 +22,12 @@ function plainText(md: string): string {
     .trim();
 }
 
-/** 지역센터가 대학에 회신할 때 그대로 붙여 쓰도록: 본문 + 근거 번호 + 기준 + 면책 문구 */
-function copyText(body: string, c: Citations | null, disclaimer: string): string {
+/** 지역센터가 대학에 회신할 때 그대로 붙여 쓰도록: 본문 + 마무리 안내 + 관련 지침 + 면책 문구 */
+function copyText(body: string, closing: string, c: Citations | null, disclaimer: string): string {
   const parts = [plainText(body)];
-  const refs = [
-    ...(c?.qa ?? []).map((q) => `표준답안 ${q.qa_id}`),
-    ...(c?.guideline ?? []).map((g) => `${g.doc_name} ${g.clause}${g.page ? ` ${g.page}쪽` : ''}`),
-  ];
-  if (refs.length) parts.push(`[근거] ${refs.join(', ')}`);
-  if (c?.basis && refs.length) parts.push(`[기준] ${c.basis.qa_version}${c.basis.applied_at ? ` (${dateOnly(c.basis.applied_at)} 적용)` : ''}`);
+  if (closing) parts.push(closing);
+  const refs = (c?.guideline ?? []).map((g) => `${g.doc_name} ${g.clause}${g.page ? ` ${g.page}쪽` : ''}`);
+  if (refs.length) parts.push(`[관련 지침] ${refs.join(', ')}`);
   if (disclaimer) parts.push(disclaimer.trim());
   return parts.join('\n\n');
 }
@@ -137,13 +131,6 @@ function FeedbackButtons({ current, onSubmit }: { current?: Feedback; onSubmit: 
 
 const DISCLAIMER_SEPARATOR = '\n\n---\n\n> ';
 
-const ANSWER_TYPE_STYLE: Record<AnswerType, { label: string; cls: string }> = {
-  근거답변: { label: '근거 답변', cls: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300' },
-  연결형: { label: '확인 필요(연결)', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300' },
-  답변범위외: { label: '답변 범위 아님', cls: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200' },
-  근거없음: { label: '근거 없음', cls: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300' },
-};
-
 export function MessageList({
   messages,
   onAskStaff,
@@ -192,11 +179,11 @@ function AssistantMessage({
   onFeedback?: (messageId: number, f: Feedback) => Promise<void>;
 }) {
   const c = parseCitations(m);
-  const type = m.answer_type ? ANSWER_TYPE_STYLE[m.answer_type] : null;
   // 서버가 본문 뒤에 붙인 면책 문구를 떼어 근거 카드 아래에 보여준다
   const sep = m.content.lastIndexOf(DISCLAIMER_SEPARATOR);
   const body = sep >= 0 ? m.content.slice(0, sep) : m.content;
   const disclaimer = sep >= 0 ? m.content.slice(sep + DISCLAIMER_SEPARATOR.length) : '';
+  const closing = c && m.answer_type === '연결형' && !c.security ? closingLine(body, c.referral) : '';
   return (
     <div className="flex justify-start">
       <div className="mr-2 mt-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-full border border-indigo-200 bg-indigo-100 sm:flex dark:border-indigo-800 dark:bg-indigo-950">
@@ -204,23 +191,14 @@ function AssistantMessage({
       </div>
       <div className="min-w-0 max-w-[92%] sm:max-w-[80%]">
         <div className="card rounded-tl-sm p-4">
-          {type && <span className={`mb-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${type.cls}`}>{type.label}</span>}
           <Markdown text={body} />
+          {closing && <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{closing}</p>}
           {c && <Evidence c={c} />}
-          {c?.basis && (c.qa.length > 0 || c.guideline.length > 0) && (
-            <p className="mt-2 text-[11px] text-slate-400 dark:text-slate-500">
-              기준: {c.basis.qa_version}
-              {c.basis.applied_at && ` (${dateOnly(c.basis.applied_at)} 적용)`}
-            </p>
-          )}
-          {c && m.answer_type && m.answer_type !== '근거답변' && !c.security && (
-            <ReferralBox type={m.answer_type} c={c} onAskStaff={onAskStaff} />
-          )}
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 px-1 text-xs text-slate-400">
           {onFeedback && <FeedbackButtons current={feedback} onSubmit={(f) => onFeedback(m.id, f)} />}
-          {!c?.security && <CopyButton text={copyText(body, c, disclaimer)} />}
+          {!c?.security && <CopyButton text={copyText(body, closing, c, disclaimer)} />}
           {onAskStaff && !c?.security && (
             <button type="button" onClick={onAskStaff} className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-300" title="이 답변으로 해결되지 않으면 대화 기록을 첨부해 재단에 문의합니다">
               <MessageSquareQuote className="h-3.5 w-3.5" /> 재단에 문의하기
@@ -239,79 +217,38 @@ function AssistantMessage({
   );
 }
 
-/** 연결형 답변 아래 안내 문구. 연락처는 보여주지 않고 어디에 문의할지만 알린다 */
+/** 연결형 답변의 마무리 문장. 연락처나 별도 상자 없이 어디에 문의할지만 한 줄로 알린다 */
 const TARGET_GUIDE: Record<string, string> = {
   지역앵커센터: '지역앵커센터에 문의하시기 바랍니다.',
   대학규정: '소속 대학(산학협력단)의 사업비 관리 규정을 확인하시기 바랍니다.',
   e나라도움: 'e나라도움 콜센터에 문의하시기 바랍니다.',
   교육부: '교육부에 문의하시기 바랍니다.',
-  담당자: '중앙앵커센터 담당자에게 문의하시기 바랍니다.',
+  담당자: '중앙앵커센터에 문의하시기 바랍니다.',
+};
+const TARGET_WORD: Record<string, RegExp> = {
+  지역앵커센터: /지역\s*(앵커|RISE)\s*센터/,
+  대학규정: /대학[^.]{0,20}규정/,
+  e나라도움: /e나라도움/,
+  교육부: /교육부/,
+  담당자: /중앙앵커센터/,
 };
 
-/** 연결형·범위 외·근거 없음 답변 아래: 어디에 문의하면 되는지(연락처 없이)와 담당자 문의 버튼 */
-function ReferralBox({
-  type,
-  c,
-  onAskStaff,
-}: {
-  type: AnswerType;
-  c: Citations;
-  onAskStaff?: () => void;
-}) {
-  const target = c.referral ?? (type === '연결형' ? '지역앵커센터' : '담당자');
-  const heading =
-    type === '연결형'
-      ? (TARGET_GUIDE[target] ?? TARGET_GUIDE.지역앵커센터)
-      : type === '답변범위외'
-        ? '사업비 지침 챗봇의 답변 범위가 아닙니다.'
-        : '근거를 찾지 못해 담당자 확인이 필요합니다.';
-  return (
-    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-slate-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-slate-200">
-      <div className="mb-1.5 flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
-        <Share2 className="h-3.5 w-3.5" /> {heading}
-      </div>
-      {type === '답변범위외' && c.out_of_scope?.department && (
-        <p className="mb-1">
-          담당 부서: <b>{c.out_of_scope.department}</b>
-        </p>
-      )}
-      {onAskStaff && (
-        <button type="button" onClick={onAskStaff} className="btn-primary mt-2.5 px-3 py-1.5 text-xs">
-          <MessageSquareQuote className="h-3.5 w-3.5" /> 재단에 문의하기 (대화 자동 첨부)
-        </button>
-      )}
-    </div>
-  );
+/** 본문 끝부분이 이미 같은 곳으로 안내하고 있으면 마무리 문장을 덧붙이지 않는다 */
+function closingLine(body: string, referral: string | null): string {
+  const target = referral && TARGET_GUIDE[referral] ? referral : '지역앵커센터';
+  const tail = body.slice(-120);
+  return TARGET_WORD[target].test(tail) && /(문의|확인|협의)/.test(tail) ? '' : TARGET_GUIDE[target];
 }
 
+/** 답변 아래 근거: 관련 지침 조항만 보여준다 (표준답안 질의·답변 원문은 보여주지 않음, 점검표 결정) */
 function Evidence({ c }: { c: Citations }) {
-  const count = c.qa.length + c.guideline.length;
-  if (!count) return null;
+  if (!c.guideline.length) return null;
   return (
     <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-700">
       <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-        <BookOpen className="h-3.5 w-3.5" /> 참고한 근거 ({count})
+        <BookOpen className="h-3.5 w-3.5" /> 관련 지침 ({c.guideline.length})
       </div>
       <div className="space-y-2">
-        {c.qa.map((q) => (
-          <EvidenceCard
-            key={q.qa_id}
-            icon={<MessageSquareQuote className="h-4 w-4 shrink-0 text-indigo-500" />}
-            title={
-              <>
-                <span className="mr-1.5 rounded bg-indigo-100 px-1.5 py-0.5 font-mono text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                  {q.qa_id}
-                </span>
-                {q.question}
-              </>
-            }
-            meta={[q.category1, q.category2, q.is_referral ? '연결형' : ''].filter(Boolean).join(' · ')}
-          >
-            <p className="whitespace-pre-wrap">{q.answer}</p>
-            {q.referral_answer && <p className="mt-2 whitespace-pre-wrap text-amber-700 dark:text-amber-300">연결형 답변: {q.referral_answer}</p>}
-            {q.change_history && <p className="mt-2 text-slate-500">답변 변경 이력: {q.change_history}</p>}
-          </EvidenceCard>
-        ))}
         {c.guideline.map((g) => (
           <EvidenceCard
             key={g.id}

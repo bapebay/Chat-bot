@@ -13,6 +13,8 @@ export const ROLES = ['user', 'admin'] as const;
 export type Role = (typeof ROLES)[number];
 
 export const MAX_LOGIN_FAILURES = 10;
+/** 로그인을 연속으로 틀렸을 때 잠시 막는 시간(분). 지나면 저절로 풀린다 (관리자 해제 불필요) */
+export const LOGIN_LOCK_MINUTES = 15;
 
 export const ANSWER_TYPES = ['근거답변', '연결형', '답변범위외', '근거없음'] as const;
 export type AnswerType = (typeof ANSWER_TYPES)[number];

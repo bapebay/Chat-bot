@@ -1,8 +1,8 @@
-import { AlertTriangle, CheckCircle2, Download, FileText, Search, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileText, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError, formatTime, type Meta } from '../api';
+import { api, ApiError, formatTime } from '../api';
 import { Notice, Select } from '../components/ui';
-import { SettingEditor } from './AdminView';
+import { QaPanel } from './ReviewView';
 
 interface UploadWarning {
   row: number | null;
@@ -48,7 +48,7 @@ interface Status {
   active_version: QaVersion | null;
 }
 
-type Section = 'qa' | 'guideline' | 'principles' | 'oos' | 'search';
+type Section = 'qa' | 'qa-edit' | 'guideline' | 'search';
 
 const STATUS_LABEL = { draft: '미리보기', active: '서비스 중', archived: '보관' };
 
@@ -78,7 +78,7 @@ export function FilePicker({ accept, label, busy, onFile }: { accept: string; la
   );
 }
 
-export function KnowledgeTab({ meta }: { meta: Meta }) {
+export function KnowledgeTab() {
   const [section, setSection] = useState<Section>('qa');
   const [status, setStatus] = useState<Status | null>(null);
 
@@ -93,20 +93,18 @@ export function KnowledgeTab({ meta }: { meta: Meta }) {
   }, [loadStatus]);
 
   const sections: { key: Section; label: string }[] = [
-    { key: 'qa', label: '표준 Q&A' },
+    { key: 'qa', label: '표준 Q&A 엑셀' },
+    { key: 'qa-edit', label: '표준답안 관리' },
     { key: 'guideline', label: '지침·FAQ 원문' },
-    { key: 'principles', label: '답변 원칙' },
-    { key: 'oos', label: '답변범위 외 목록' },
-    { key: 'search', label: '검색 설정·시험' },
+    { key: 'search', label: '검색 설정' },
   ];
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4">
       {status && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-3 gap-3">
           <Stat label="검색 중인 표준답안" value={status.qa} />
           <Stat label="지침·FAQ 조항" value={status.guideline} />
-          <Stat label="답변범위 외 질의" value={status.out_of_scope} />
           <div className="card p-3 text-center">
             <div className={`text-sm font-bold ${status.semantic_ready ? 'text-green-600 dark:text-green-400' : 'text-slate-500'}`}>
               {status.semantic_model ? (status.semantic_ready ? '키워드 + 의미' : '의미 색인 계산 중…') : '키워드만'}
@@ -129,9 +127,8 @@ export function KnowledgeTab({ meta }: { meta: Meta }) {
       </div>
       {section === 'qa' && <QaSection onChanged={loadStatus} />}
       {section === 'guideline' && <GuidelineSection onChanged={loadStatus} />}
-      {section === 'principles' && <PrinciplesSection />}
-      {section === 'oos' && <OutOfScopeSection onChanged={loadStatus} />}
-      {section === 'search' && <SearchSection meta={meta} status={status} onChanged={loadStatus} />}
+      {section === 'qa-edit' && <QaPanel isAdmin />}
+      {section === 'search' && <SearchSection status={status} onChanged={loadStatus} />}
     </div>
   );
 }
@@ -478,147 +475,19 @@ function GuidelineSection({ onChanged }: { onChanged: () => void }) {
 
 // ================= 답변 원칙 =================
 
-function PrinciplesSection() {
-  const [fill, setFill] = useState<{ text: string; n: number } | null>(null);
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function parse(f: File) {
-    setBusy(true);
-    setMessage('');
-    const form = new FormData();
-    form.append('file', f);
-    try {
-      const r = await api<{ text: string }>('/api/admin/knowledge/principles/parse', { body: form });
-      setFill({ text: r.text, n: Date.now() });
-    } catch (err) {
-      setMessage(errorText(err, '파일을 읽지 못했습니다.'));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="card flex flex-wrap items-center justify-between gap-2 p-4">
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          답변 원칙 문서(엑셀의 ‘원칙’ 열, 또는 TXT)를 불러오면 아래 편집기에 채워집니다. 내용을 확인하고 [저장]을 눌러야 반영됩니다.
-        </p>
-        <FilePicker accept=".xlsx,.txt,.md" label="파일에서 불러오기" busy={busy} onFile={parse} />
-      </div>
-      <Notice>{message}</Notice>
-      <SettingEditor
-        key={fill?.n ?? 0}
-        settingKey="principles"
-        title="답변 원칙 (매 질문마다 모델에 함께 전달)"
-        help="담당자가 검수하며 정한 반복 기준(범위, 연결 규칙, 인건비·수당·이월·정산 등). 한 줄에 한 항목으로 적습니다."
-        rows={20}
-        initialDraft={fill?.text}
-        allowEmpty
-      />
-    </div>
-  );
-}
-
-// ================= 답변범위 외 목록 =================
-
-function OutOfScopeSection({ onChanged }: { onChanged: () => void }) {
-  const [items, setItems] = useState<{ id: number; question: string; guidance: string; department: string }[]>([]);
-  const [busy, setBusy] = useState(false);
+function SearchSection({ status, onChanged }: { status: Status | null; onChanged: () => void }) {
+  const [unreviewed, setUnreviewed] = useState('');
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
 
-  const load = useCallback(async () => setItems(await api('/api/admin/knowledge/out-of-scope')), []);
   useEffect(() => {
-    load();
-  }, [load]);
-
-  async function upload(f: File) {
-    if (items.length && !confirm('기존 목록을 새 파일 내용으로 바꿉니다. 계속할까요?')) return;
-    setBusy(true);
-    setMessage(null);
-    const form = new FormData();
-    form.append('file', f);
-    try {
-      const r = await api<{ count: number }>('/api/admin/knowledge/out-of-scope/upload', { body: form });
-      setMessage({ kind: 'success', text: `${r.count}건으로 바꿨습니다.` });
-      await load();
-      onChanged();
-    } catch (err) {
-      setMessage({ kind: 'error', text: errorText(err, '업로드에 실패했습니다.') });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <section className="card space-y-3 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold text-slate-800 dark:text-slate-100">답변범위 외 목록 ({items.length})</h3>
-          <FilePicker accept=".xlsx,.txt,.csv" label="파일로 바꾸기" busy={busy} onFile={upload} />
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          엑셀 머리글: 대표 질의 · 안내 문구 · 담당 부서 (텍스트 파일은 한 줄에 질의 하나). 질문이 여기에 가까우면 모델을 부르지 않고 ‘답변 범위가 아닙니다’로 안내합니다.
-        </p>
-        {message && <Notice kind={message.kind}>{message.text}</Notice>}
-      </section>
-      <section className="card divide-y divide-slate-100 dark:divide-slate-700">
-        {items.map((it) => (
-          <div key={it.id} className="p-3 text-sm text-slate-700 dark:text-slate-200">
-            <div className="font-medium">{it.question}</div>
-            {(it.guidance || it.department) && (
-              <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                {it.guidance} {it.department && `· 담당: ${it.department}`}
-              </div>
-            )}
-          </div>
-        ))}
-        {items.length === 0 && <p className="p-6 text-center text-sm text-slate-400">등록된 항목이 없습니다.</p>}
-      </section>
-    </div>
-  );
-}
-
-// ================= 검색 설정·시험 =================
-
-interface SearchTestResult {
-  mode: 'hybrid' | 'keyword';
-  passed: boolean;
-  qa: { qa_id: string; category1: string; question: string; keyword: number; semantic: number | null; relevant: boolean }[];
-  guideline: { doc_name: string; clause: string; page: number | null; keyword: number; semantic: number | null; relevant: boolean }[];
-  out_of_scope: { question: string; keyword: number; semantic: number | null } | null;
-}
-
-const NUMERIC_SETTINGS = [
-  { key: 'threshold_keyword', label: '키워드 기준값 (0~1)', help: '질문 핵심어가 근거에 들어 있는 비율. 높이면 더 엄격해집니다.' },
-  { key: 'threshold_semantic', label: '의미 기준값 (0~1)', help: '의미 검색을 쓸 때 문장 유사도 기준.' },
-  { key: 'top_k_qa', label: '표준답안 최대 건수', help: '모델에 넘기는 표준답안 수 (1~10).' },
-  { key: 'top_k_guideline', label: '지침 조항 최대 건수', help: '모델에 넘기는 지침 조항 수 (1~10).' },
-];
-
-function SearchSection({ meta, status, onChanged }: { meta: Meta; status: Status | null; onChanged: () => void }) {
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [saved, setSaved] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null);
-  const [query, setQuery] = useState('');
-  const [bt, setBt] = useState('모름');
-  const [result, setResult] = useState<SearchTestResult | null>(null);
-
-  useEffect(() => {
-    const keys = ['include_unreviewed', ...NUMERIC_SETTINGS.map((s) => s.key)];
-    Promise.all(keys.map((k) => api<{ value: string }>(`/api/admin/settings/${k}`).then((r) => [k, r.value] as const))).then((pairs) => {
-      const v = Object.fromEntries(pairs);
-      setValues(v);
-      setSaved(v);
-    });
+    api<{ value: string }>('/api/admin/settings/include_unreviewed').then((r) => setUnreviewed(r.value));
   }, []);
 
-  async function save(key: string, value: string) {
+  async function save(value: string) {
     setMessage(null);
     try {
-      await api(`/api/admin/settings/${key}`, { method: 'PUT', body: { value } });
-      setSaved((p) => ({ ...p, [key]: value }));
-      setValues((p) => ({ ...p, [key]: value }));
+      await api('/api/admin/settings/include_unreviewed', { method: 'PUT', body: { value } });
+      setUnreviewed(value);
       setMessage({ kind: 'success', text: '저장했습니다. 다음 질문부터 적용됩니다.' });
       onChanged();
     } catch (err) {
@@ -626,119 +495,24 @@ function SearchSection({ meta, status, onChanged }: { meta: Meta; status: Status
     }
   }
 
-  async function test() {
-    if (!query.trim()) return;
-    try {
-      setResult(await api<SearchTestResult>('/api/admin/knowledge/search-test', { body: { query, business_type: bt } }));
-    } catch (err) {
-      setMessage({ kind: 'error', text: errorText(err, '검색에 실패했습니다.') });
-    }
-  }
-
-  const score = (h: { keyword: number; semantic: number | null }) =>
-    `키워드 ${h.keyword.toFixed(2)}${h.semantic !== null ? ` · 의미 ${h.semantic.toFixed(2)}` : ''}`;
-
   return (
-    <div className="space-y-4">
-      <section className="card space-y-4 p-4">
-        <h3 className="font-bold text-slate-800 dark:text-slate-100">검색 설정</h3>
-        <label className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            checked={values.include_unreviewed === 'true'}
-            onChange={(e) => save('include_unreviewed', e.target.checked ? 'true' : 'false')}
-          />
-          <span className="text-slate-700 dark:text-slate-200">
-            <b>미검수 표준답안도 사용</b>
-            <span className="block text-xs text-slate-500 dark:text-slate-400">1단계(재단 내부) 시범운영에서만 켜세요. 끄면 검수상태 ‘확정’만 씁니다.</span>
-          </span>
-        </label>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {NUMERIC_SETTINGS.map((s) => (
-            <div key={s.key}>
-              <label className="label">{s.label}</label>
-              <div className="flex gap-2">
-                <input className="input" value={values[s.key] ?? ''} onChange={(e) => setValues((p) => ({ ...p, [s.key]: e.target.value }))} />
-                <button type="button" className="btn-secondary shrink-0" disabled={values[s.key] === saved[s.key]} onClick={() => save(s.key, values[s.key])}>
-                  저장
-                </button>
-              </div>
-              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{s.help}</p>
-            </div>
-          ))}
-        </div>
-        <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-          <b>의미 검색</b>:{' '}
-          {status?.semantic_model
-            ? `${status.semantic_model} ${status.semantic_ready ? '사용 중' : '색인 계산 중'}`
-            : '모델 파일이 없어 키워드 검색만 사용 중입니다. 서버에서 `npm run download-model` 을 한 번 실행하고 다시 시작하면 켜집니다.'}
-          {status?.semantic_error && <span className="text-red-600"> (오류: {status.semantic_error})</span>}
-        </div>
-        {message && <Notice kind={message.kind}>{message.text}</Notice>}
-      </section>
-
-      <section className="card space-y-3 p-4">
-        <h3 className="font-bold text-slate-800 dark:text-slate-100">검색 시험</h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400">질문을 넣으면 AI를 부르지 않고 어떤 근거가 몇 점으로 찾아지는지만 보여줍니다. 기준값을 정할 때 쓰세요.</p>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <input className="input flex-1" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && test()} placeholder="예: 글로컬 사업단장 보직수당 지급 가능한가요?" />
-          <Select value={bt} onChange={setBt} options={meta.business_types} className="input sm:w-32" />
-          <button type="button" className="btn-primary shrink-0" onClick={test}>
-            <Search className="h-4 w-4" /> 검색
-          </button>
-        </div>
-        {result && (
-          <div className="space-y-3 text-sm">
-            <div className={`flex items-center gap-2 font-semibold ${result.passed ? 'text-green-700 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-              {result.passed ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-              {result.passed ? '근거 있음 → AI가 답변을 만듭니다' : '근거 없음 → AI를 부르지 않고 ‘담당자 문의’를 안내합니다'}
-              <span className="text-xs font-normal text-slate-500">({result.mode === 'hybrid' ? '키워드+의미' : '키워드'} 검색)</span>
-            </div>
-            {result.out_of_scope && (
-              <Notice kind="info">
-                답변범위 외 목록과 비슷함: “{result.out_of_scope.question}” ({score(result.out_of_scope)})
-              </Notice>
-            )}
-            <ResultList
-              title="표준답안"
-              rows={result.qa.map((h) => ({ key: h.qa_id, label: `[${h.qa_id}] ${h.question}`, sub: h.category1, relevant: h.relevant, score: score(h) }))}
-            />
-            <ResultList
-              title="지침 조항"
-              rows={result.guideline.map((h, i) => ({
-                key: String(i),
-                label: h.clause,
-                sub: `${h.doc_name}${h.page ? ` · ${h.page}쪽` : ''}`,
-                relevant: h.relevant,
-                score: score(h),
-              }))}
-            />
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function ResultList({ title, rows }: { title: string; rows: { key: string; label: string; sub: string; relevant: boolean; score: string }[] }) {
-  return (
-    <div>
-      <div className="mb-1 text-xs font-bold text-slate-500">{title}</div>
-      {rows.length === 0 && <p className="text-xs text-slate-400">찾은 항목 없음</p>}
-      <div className="space-y-1">
-        {rows.map((r) => (
-          <div key={r.key} className="flex items-start gap-2 rounded border border-slate-200 p-2 dark:border-slate-700">
-            <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${r.relevant ? 'bg-green-500' : 'bg-slate-300'}`} title={r.relevant ? '기준 통과' : '기준 미달(참고용)'} />
-            <div className="min-w-0 flex-1">
-              <div className="text-slate-800 dark:text-slate-100">{r.label}</div>
-              <div className="text-[11px] text-slate-500">
-                {r.sub} · {r.score}
-              </div>
-            </div>
-          </div>
-        ))}
+    <section className="card space-y-4 p-4">
+      <h3 className="font-bold text-slate-800 dark:text-slate-100">검색 설정</h3>
+      <label className="flex items-center gap-3 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+        <input type="checkbox" className="h-4 w-4" checked={unreviewed === 'true'} onChange={(e) => save(e.target.checked ? 'true' : 'false')} />
+        <span className="text-slate-700 dark:text-slate-200">
+          <b>미검수 표준답안도 사용</b>
+          <span className="block text-xs text-slate-500 dark:text-slate-400">1단계(재단 내부) 시범운영에서만 켜세요. 끄면 검수상태 ‘확정’만 씁니다.</span>
+        </span>
+      </label>
+      <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+        <b>의미 검색</b>:{' '}
+        {status?.semantic_model
+          ? `${status.semantic_model} ${status.semantic_ready ? '사용 중' : '색인 계산 중'}`
+          : '모델 파일이 없어 키워드 검색만 사용 중입니다. 서버에서 `npm run download-model` 을 한 번 실행하고 다시 시작하면 켜집니다.'}
+        {status?.semantic_error && <span className="text-red-600"> (오류: {status.semantic_error})</span>}
       </div>
-    </div>
+      {message && <Notice kind={message.kind}>{message.text}</Notice>}
+    </section>
   );
 }

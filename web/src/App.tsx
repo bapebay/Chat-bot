@@ -11,6 +11,12 @@ import { ReviewView } from './views/ReviewView';
 
 type View = 'chat' | 'inquiries' | 'review' | 'admin';
 
+/** 휴대폰·태블릿 접속인지 (모바일 이용은 막는다: AI 사용량 과다 우려, 점검표 결정) */
+function isMobileDevice(): boolean {
+  const ua = navigator.userAgent;
+  return /Android|iPhone|iPad|iPod|Mobi/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
 function useDarkMode() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
   useEffect(() => {
@@ -100,6 +106,18 @@ export default function App() {
       </div>
     );
   }
+  // 데모 페이지는 휴대폰에서도 둘러볼 수 있게 둔다
+  if (!meta.demo && isMobileDevice()) {
+    return (
+      <div className="flex min-h-full items-center justify-center p-6">
+        <div className="card max-w-sm p-6 text-center">
+          <Layers className="mx-auto mb-3 h-10 w-10 text-indigo-600 dark:text-indigo-400" />
+          <h1 className="text-lg font-bold text-slate-800 dark:text-slate-100">PC에서 이용해 주세요</h1>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">앵커 사업비 챗봇은 PC(컴퓨터) 웹 브라우저에서만 이용할 수 있습니다.</p>
+        </div>
+      </div>
+    );
+  }
   if (!user) return <AuthPage meta={meta} onLogin={(u) => { setUser(u); setView('chat'); }} />;
 
   if (user.must_change_password) {
@@ -177,7 +195,7 @@ export default function App() {
 
       {view === 'chat' && <ChatView user={user} meta={meta} onInquirySent={refreshBadges} />}
       {view === 'inquiries' && <InquiriesView user={user} onChanged={refreshBadges} />}
-      {view === 'review' && user.role !== 'user' && <ReviewView user={user} />}
+      {view === 'review' && user.role !== 'user' && <ReviewView />}
       {view === 'admin' && user.role === 'admin' && <AdminView me={user} meta={meta} onUsersChanged={refreshBadges} />}
 
       {showPw && (

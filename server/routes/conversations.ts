@@ -22,6 +22,8 @@ interface ConversationRow {
 
 const MAX_QUESTION_LENGTH = 3000;
 
+const MOBILE_UA = /Android|iPhone|iPad|iPod|Mobi/i;
+
 export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient, kb: KnowledgeBase) {
   const loggedIn = requireRole(db, 'user');
 
@@ -95,6 +97,10 @@ export function conversationRoutes(app: FastifyInstance, db: DB, llm: LlmClient,
   app.post('/api/conversations/:id/messages', { preHandler: loggedIn }, async (req, reply) => {
     const conv = ownConversation(req.user.id, (req.params as { id: string }).id);
     if (!conv) return reply.code(404).send({ error: '대화를 찾을 수 없습니다.' });
+    // 모바일 이용은 막는다 (AI 사용량 과다 우려, 점검표 결정). 화면도 막지만 서버에서 한 번 더 확인
+    if (MOBILE_UA.test(req.headers['user-agent'] ?? '')) {
+      return reply.code(403).send({ error: 'PC(컴퓨터) 웹 브라우저에서 이용해 주세요.', code: 'MOBILE_BLOCKED' });
+    }
     const raw = str(((req.body ?? {}) as Record<string, unknown>).content);
     if (!raw) return reply.code(400).send({ error: '질문을 입력해 주세요.' });
     // 화면에서 한 번 경고하지만, 서버도 저장·모델 전송 전에 개인정보 패턴을 항상 가린다

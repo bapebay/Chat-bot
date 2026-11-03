@@ -58,15 +58,6 @@ function multipart(filename: string, content: Buffer) {
   };
 }
 
-test('답변마다 그때 쓰던 표준답안 차수가 기록된다', async () => {
-  const { app, user } = await setup();
-  const conv = (await app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: user }, payload: {} })).json();
-  const res = await app.inject({ method: 'POST', url: `/api/conversations/${conv.id}/messages`, headers: { cookie: user }, payload: { content: '회의비 집행 기준은?' } });
-  const c = JSON.parse(res.json().messages.at(-1).citations);
-  assert.equal(c.basis.qa_version, '중복질의_통합_표준답안초안_5차');
-  assert.ok(c.basis.applied_at);
-});
-
 test('1:1 문의 답변이 오면 문의자에게 새 답변 수가 보이고, 목록을 열면 사라진다. 답변은 표준답안 등록 표시를 남길 수 있다', async () => {
   const { app, admin, user } = await setup();
   // 챗봇을 거치지 않은 바로 문의는 막힌다
@@ -145,4 +136,16 @@ test('월간 운영 보고서: 한국 시간 한 달 범위로 시트를 만든�
   assert.equal(wb.getWorksheet('많이 묻는 주제')!.getRow(2).getCell(1).value, '공통 · 회의비');
   assert.equal((await app.inject({ url: '/api/admin/report?month=bad', headers: { cookie: admin } })).statusCode, 400);
   assert.equal((await app.inject({ url: `/api/admin/report?month=${month}`, headers: { cookie: user } })).statusCode, 403);
+});
+
+test('휴대폰에서는 질문할 수 없다 (AI 사용량 과다 우려)', async () => {
+  const { app, user } = await setup();
+  const conv = (await app.inject({ method: 'POST', url: '/api/conversations', headers: { cookie: user }, payload: {} })).json();
+  const ask = (ua: string) =>
+    app.inject({ method: 'POST', url: `/api/conversations/${conv.id}/messages`, headers: { cookie: user, 'user-agent': ua }, payload: { content: '회의비 집행 기준은?' } });
+  const phone = await ask('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148');
+  assert.equal(phone.statusCode, 403);
+  assert.equal(phone.json().code, 'MOBILE_BLOCKED');
+  const pc = await ask('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36');
+  assert.equal(pc.statusCode, 200);
 });

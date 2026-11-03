@@ -92,27 +92,4 @@ export const DEMO_GUIDELINE_TEXT = `1. 적용 범위 및 활용
 - 장학금: 학자금 보조 성격. 생활비 보조 성격은 불가.
 - 실험·실습장비: 3천만원 이상은 자체 심의, 1억원 이상은 중앙센터 사전 승인.`;
 
-export const DEMO_OUT_OF_SCOPE = [
-  { question: '자체평가 실적으로 인정되나요?', guidance: '성과관리(실적 인정·자체평가)는 사업비 지침 챗봇의 답변 범위가 아닙니다.', department: '성과관리 담당 부서' },
-  { question: '성과지표 달성 실적 인정 여부', guidance: '성과지표 실적 인정은 성과관리 지침에 따릅니다.', department: '성과관리 담당 부서' },
-  { question: '보조금법 조항 해석을 알려 주세요', guidance: '법령 유권해석은 해당 법령 소관 부처에 문의해 주세요.', department: '교육부' },
-];
-
-export const DEMO_PRINCIPLES = `1. 인건비는 사업 전담 인력에 한해 편성하며 기존 급여와 중복 지급하지 않는다.
-2. 보직수당·성과급은 합산 한도를 함께 안내한다.
-3. 이월은 '원칙 불가, 예외 10% 1회'의 순서로 안내한다.
-4. 개별 집행 건의 인정 여부는 판단하지 않고 지역앵커센터로 연결한다.
-5. 정산 시기는 사업연도와 회계연도 차이를 함께 설명한다.`;
-
-export const DEMO_EVAL_ITEMS = [
-  { question: '글로컬 사업단장 보직수당 줄 수 있나요?', business_type: '글로컬', expected: ['B4-01-a'], type: '근거답변' },
-  { question: '사업비 이월 가능한가요? 한도도 알려주세요', business_type: '모름', expected: ['C2-03-a'], type: '근거답변' },
-  { question: '정산보고서 제출 기한은?', business_type: '모름', expected: ['C3-01-a'], type: '근거답변' },
-  { question: '1억원 넘는 장비 살 때 승인 받아야 하나요?', business_type: '모름', expected: ['D1-01-a'], type: '근거답변' },
-  { question: '선결제 해도 되나요?', business_type: '모름', expected: ['C4-01-a'], type: '근거답변' },
-  { question: '순수앵커 보직수당 기준이 궁금합니다', business_type: '순수앵커', expected: ['B4-01-b'], type: '연결형' },
-  { question: '자체평가 실적으로 인정되나요?', business_type: '모름', expected: [], type: '답변범위외' },
-  { question: '사업단 워크숍 숙소 예약 방법은?', business_type: '모름', expected: [], type: '근거없음' },
-];
-
 export const REGIONS_17 = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'];

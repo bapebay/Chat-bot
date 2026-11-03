@@ -71,8 +71,6 @@ export interface Citations {
   }[];
   guideline: { id: string; doc_name: string; doc_kind: string; clause: string; page: number | null; text: string }[];
   out_of_scope: { question: string; guidance: string; department: string } | null;
-  /** 답변할 때 쓰던 표준답안 차수 */
-  basis?: { qa_version: string; applied_at: string | null } | null;
   /** 보안 의심으로 막은 경우 그 종류 */
   security?: string;
   retrieved?: {

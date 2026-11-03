@@ -1,6 +1,6 @@
 import type { DB } from '../db.js';
 import { TEMPORARY_FAQ, TEMPORARY_GUIDELINE } from '../defaults.js';
-import type { ParsedOutOfScope, ParsedQaItem, UploadWarning } from './excel.js';
+import type { ParsedQaItem, UploadWarning } from './excel.js';
 import { chunkDocument, type Chunk } from './guideline.js';
 import { isConfirmed } from './index.js';
 
@@ -85,14 +85,6 @@ export function listQaItems(db: DB, versionId: number, q: string, limit = 200) {
        ORDER BY id LIMIT ?`,
     )
     .all(versionId, q, like, like, like, like, limit);
-}
-
-export function replaceOutOfScope(db: DB, items: ParsedOutOfScope[]): void {
-  db.transaction(() => {
-    db.prepare('DELETE FROM out_of_scope').run();
-    const ins = db.prepare('INSERT INTO out_of_scope (question, guidance, department) VALUES (?, ?, ?)');
-    for (const it of items) ins.run(it.question, it.guidance, it.department);
-  })();
 }
 
 export function addGuidelineDoc(db: DB, doc: { name: string; kind: string; filename: string; userId: number | null }, chunks: Chunk[]): number {

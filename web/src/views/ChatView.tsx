@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, Loader2, Megaphone, PlusCircle, Search, Send, ShieldAlert, Sidebar, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertCircle, Bot, Loader2, Megaphone, PlusCircle, Search, Send, ShieldAlert, Sidebar, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { api, ApiError, formatTime, type Conversation, type Message, type Meta, type Usage, type User } from '../api';
 import { InquiryModal } from '../components/InquiryModal';
@@ -23,7 +23,6 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
   const [usage, setUsage] = useState<Usage | null>(null);
   const [piiFound, setPiiFound] = useState<PiiMatch[] | null>(null);
   const [feedback, setFeedback] = useState<Record<number, Feedback>>({});
-  const [suggestions, setSuggestions] = useState<{ category: string; question: string }[]>([]);
   const [notices, setNotices] = useState<{ id: number; title: string; body: string; created_at: string }[]>([]);
   const [hiddenNotices, setHiddenNotices] = useState<number[]>(() => {
     try {
@@ -35,7 +34,6 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
 
   useEffect(() => {
     api<Usage>('/api/usage').then(setUsage).catch(() => undefined);
-    api<{ category: string; question: string }[]>('/api/suggestions').then(setSuggestions).catch(() => undefined);
     api<typeof notices>('/api/notices').then(setNotices).catch(() => undefined);
   }, []);
 
@@ -243,26 +241,6 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
                 <p className="mt-3 text-xs text-slate-400">
                   법령 해석, 개별 집행 건의 인정 여부, 성과관리는 답변 범위가 아닙니다.
                 </p>
-                {suggestions.length > 0 && (
-                  <div className="mt-5 border-t border-slate-200 pt-4 text-left dark:border-slate-700">
-                    <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-slate-500 dark:text-slate-400">
-                      <Sparkles className="h-3.5 w-3.5" /> 자주 묻는 질문
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {suggestions.map((sg) => (
-                        <button
-                          key={sg.category}
-                          type="button"
-                          onClick={() => send(undefined, { text: sg.question })}
-                          className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-left text-sm text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-indigo-950"
-                        >
-                          <span className="mb-0.5 block text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">{sg.category}</span>
-                          {sg.question}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
             <MessageList

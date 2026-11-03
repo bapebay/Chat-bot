@@ -11,7 +11,6 @@ import { openDatabase } from './db.js';
 import { KnowledgeBase } from './knowledge/index.js';
 import type { LlmClient } from './llm/index.js';
 import { createOpenAiClient } from './llm/openai.js';
-import { ipAllowed } from './security.js';
 
 const llm: LlmClient = {
   provider: 'fake',
@@ -50,40 +49,24 @@ test('로그인 시도는 같은 IP에서 1분 10회까지만 받는다', async 
   await app.close();
 });
 
-test('앞단 웹서버를 믿으면 실제 접속자 IP로 센다', async () => {
-  const app = await makeApp({ rateLimit: true, trustProxy: (_a: string, hop: number) => hop < 1 });
-  const login = (client: string) =>
+test('같은 서버·내부망의 앞단 웹서버만 믿고 실제 접속자 IP로 센다', async () => {
+  const app = await makeApp({ rateLimit: true });
+  const login = (remote: string, client: string) =>
     app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      remoteAddress: '10.0.0.1',
+      remoteAddress: remote,
       headers: { 'x-forwarded-for': client },
       payload: { username: 'nobody', password: 'wrongpass1' },
     });
-  for (let i = 0; i < 10; i++) await login('203.0.113.1');
-  assert.equal((await login('203.0.113.1')).statusCode, 429);
-  assert.equal((await login('203.0.113.2')).statusCode, 401);
+  // 내부망 웹서버(10.x) 뒤: 접속자별로 따로 센다
+  for (let i = 0; i < 10; i++) await login('10.0.0.1', '203.0.113.1');
+  assert.equal((await login('10.0.0.1', '203.0.113.1')).statusCode, 429);
+  assert.equal((await login('10.0.0.1', '203.0.113.2')).statusCode, 401);
+  // 외부에서 직접 와서 X-Forwarded-For 를 꾸며도 믿지 않는다 (같은 IP로 셈)
+  for (let i = 0; i < 10; i++) await login('198.51.100.9', `198.18.0.${i}`);
+  assert.equal((await login('198.51.100.9', '198.18.0.99')).statusCode, 429);
   await app.close();
-});
-
-test('관리 메뉴는 허용한 IP에서만 열린다', async () => {
-  const app = await makeApp({ staffAllowedIps: ['10.0.0.0/8', '203.0.113.5'] });
-  const get = (ip: string, url = '/api/admin/system') => app.inject({ method: 'GET', url, remoteAddress: ip });
-  assert.equal((await get('198.51.100.1')).statusCode, 403);
-  assert.equal((await get('198.51.100.1', '/api/review/queue')).statusCode, 403);
-  assert.equal((await get('10.20.30.40')).statusCode, 401); // 막히지 않고 로그인 확인 단계로 넘어감
-  assert.equal((await get('203.0.113.5')).statusCode, 401);
-  // 일반 메뉴는 어디서나
-  assert.equal((await get('198.51.100.1', '/api/health')).statusCode, 200);
-  await app.close();
-});
-
-test('IP 대역 판정', () => {
-  assert.equal(ipAllowed('192.168.1.20', ['192.168.1.0/24']), true);
-  assert.equal(ipAllowed('192.168.2.20', ['192.168.1.0/24']), false);
-  assert.equal(ipAllowed('::ffff:192.168.1.20', ['192.168.1.0/24']), true);
-  assert.equal(ipAllowed('::1', ['::1']), true);
-  assert.equal(ipAllowed('1.2.3.4', ['0.0.0.0/0']), true);
 });
 
 test('백업은 서비스 중에도 온전한 DB 파일을 만들고 오래된 것은 지운다', async () => {

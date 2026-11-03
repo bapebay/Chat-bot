@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import net from 'node:net';
 
 // ================= 보안 헤더 =================
 
@@ -114,41 +113,3 @@ export const DEFAULT_RATE_RULES: RateRule[] = [
     message: '요청이 너무 많습니다. 잠시 뒤 다시 시도하세요.',
   },
 ];
-
-// ================= 관리 메뉴 접근 IP 제한 =================
-
-function ipv4ToInt(ip: string): number | null {
-  if (!net.isIPv4(ip)) return null;
-  return ip.split('.').reduce((n, p) => (n << 8) + Number(p), 0) >>> 0;
-}
-
-/** ip가 목록(정확한 IP 또는 IPv4 대역 a.b.c.d/n)에 들어 있는지 */
-export function ipAllowed(ip: string, allowed: string[]): boolean {
-  const plain = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
-  const n = ipv4ToInt(plain);
-  for (const entry of allowed) {
-    const [base, bitsRaw] = entry.split('/');
-    if (bitsRaw === undefined) {
-      if (base === plain || base === ip) return true;
-      continue;
-    }
-    const b = ipv4ToInt(base);
-    const bits = Number(bitsRaw);
-    if (n === null || b === null || !(bits >= 0 && bits <= 32)) continue;
-    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-    if ((n & mask) === (b & mask)) return true;
-  }
-  return false;
-}
-
-const STAFF_PREFIXES = ['/api/admin/', '/api/review/', '/api/manage/'];
-
-/** 관리 메뉴(API)는 허용한 IP에서만 열리게 한다. 목록이 비어 있으면 제한하지 않는다 */
-export function staffIpGuard(app: FastifyInstance, allowed: string[]): void {
-  if (!allowed.length) return;
-  app.addHook('onRequest', async (req, reply) => {
-    if (!STAFF_PREFIXES.some((p) => req.url.startsWith(p))) return;
-    if (ipAllowed(req.ip, allowed)) return;
-    return reply.code(403).send({ error: '관리 메뉴는 허용된 곳(기관 네트워크)에서만 쓸 수 있습니다.' });
-  });
-}

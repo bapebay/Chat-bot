@@ -289,6 +289,13 @@ function migrate(db: DB) {
   if (!has('inquiries', 'user_unread')) db.exec('ALTER TABLE inquiries ADD COLUMN user_unread INTEGER NOT NULL DEFAULT 0');
   // 문의 답변으로 만든 표준답안 통합번호 (같은 문의를 두 번 등록하지 않게 표시)
   if (!has('inquiries', 'qa_id')) db.exec('ALTER TABLE inquiries ADD COLUMN qa_id TEXT');
+  // 로그인 잠금은 잠시 막았다가 저절로 풀리는 방식으로 (관리자 해제 화면 없앰). 예전 영구 잠금은 풀어 준다
+  if (!has('users', 'locked_until')) {
+    db.exec('ALTER TABLE users ADD COLUMN locked_until TEXT');
+    db.exec('UPDATE users SET locked = 0, failed_attempts = 0');
+  }
+  // 답변범위 외 목록 기능을 없앴다: 예전에 올린 목록이 답변에 계속 영향을 주지 않게 비운다
+  db.exec('DELETE FROM out_of_scope');
   // 검수자 역할을 없애고 그 권한을 관리자에게 합쳤다 (기존 검수자 계정은 관리자로)
   db.exec(`UPDATE users SET role = 'admin' WHERE role = 'reviewer'`);
   // 연결 대상 연락처 기능을 없앴다 (답변에는 '○○에 문의하시기 바랍니다'만 안내)

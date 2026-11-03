@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { accountProblem, buildAccountsTemplate, createAccount, parseAccountsWorkbook, type AccountInput } from '../accounts.js';
 import { audit } from '../audit.js';
-import { backupDatabase, listBackups } from '../backup.js';
 import {
   deleteUserSessions,
   generateTempPassword,
@@ -113,20 +112,12 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     return { ok: true };
   });
 
-  app.post('/api/admin/users/:id/unlock', { preHandler: admin }, async (req, reply) => {
-    const user = findUser((req.params as { id: string }).id);
-    if (!user) return reply.code(404).send({ error: '사용자를 찾을 수 없습니다.' });
-    db.prepare('UPDATE users SET locked = 0, failed_attempts = 0 WHERE id = ?').run(user.id);
-    audit(db, req.user, '잠금 해제', user.username);
-    return { ok: true };
-  });
-
   app.post('/api/admin/users/:id/reset-password', { preHandler: admin }, async (req, reply) => {
     const user = findUser((req.params as { id: string }).id);
     if (!user) return reply.code(404).send({ error: '사용자를 찾을 수 없습니다.' });
     const tempPassword = generateTempPassword();
     db.prepare(
-      'UPDATE users SET password_hash = ?, must_change_password = 1, locked = 0, failed_attempts = 0 WHERE id = ?',
+      'UPDATE users SET password_hash = ?, must_change_password = 1, locked = 0, failed_attempts = 0, locked_until = NULL WHERE id = ?',
     ).run(hashPassword(tempPassword), user.id);
     deleteUserSessions(db, user.id);
     audit(db, req.user, '비밀번호 초기화', user.username);
@@ -202,17 +193,6 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
     const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
     return {
       llm: { provider: llm.provider, model: llm.model, history_messages: config.llm.historyMessages },
-      backup: {
-        interval_hours: config.backup.intervalHours,
-        keep: config.backup.keep,
-        latest: listBackups(config.backup.dir)[0] ?? null,
-        count: listBackups(config.backup.dir).length,
-      },
-      security: {
-        rate_limit: config.security.rateLimit,
-        staff_ip_limited: config.security.staffAllowedIps.length > 0,
-        https_cookie: config.cookieSecure,
-      },
       counts: {
         users: count('SELECT COUNT(*) AS n FROM users'),
         pending_users: count(`SELECT COUNT(*) AS n FROM users WHERE status = 'pending'`),
@@ -221,12 +201,5 @@ export function adminRoutes(app: FastifyInstance, db: DB, llm: LlmClient, knowle
         pending_inquiries: count(`SELECT COUNT(*) AS n FROM inquiries WHERE status = 'pending'`),
       },
     };
-  });
-
-  // 관리자가 지금 바로 백업 (이전·업데이트 직전 등)
-  app.post('/api/admin/backup', { preHandler: admin }, async (req) => {
-    const file = await backupDatabase(db, config.backup.dir, config.backup.keep);
-    audit(db, req.user, 'DB 백업', file.split(/[\\/]/).pop() ?? file);
-    return { ok: true, latest: listBackups(config.backup.dir)[0] ?? null };
   });
 }

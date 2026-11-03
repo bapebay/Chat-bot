@@ -2,9 +2,8 @@ import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { audit } from '../audit.js';
 import { requireRole } from '../auth.js';
-import { BUSINESS_TYPES } from '../constants.js';
 import type { DB } from '../db.js';
-import { buildQaWorkbook, parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../knowledge/excel.js';
+import { buildQaWorkbook, parseQaWorkbook } from '../knowledge/excel.js';
 import { chunkUpload } from '../knowledge/guideline.js';
 import type { KnowledgeBase } from '../knowledge/index.js';
 import {
@@ -15,7 +14,6 @@ import {
   listGuidelineDocs,
   listQaItems,
   listQaVersions,
-  replaceOutOfScope,
 } from '../knowledge/store.js';
 import { idParam, str } from './util.js';
 
@@ -135,35 +133,7 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   });
 
   // ----- 답변 원칙: 파일에서 글을 읽어 편집기에 채워 준다 (저장은 설정 화면에서) -----
-  app.post('/api/admin/knowledge/principles/parse', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.(xlsx|txt|md)$/i);
-    if (!up) return;
-    try {
-      return { text: await parsePrinciples(up.buffer, up.filename) };
-    } catch (e) {
-      return fail(reply, e);
-    }
-  });
-
   // ----- 답변범위 외 목록 -----
-  app.get('/api/admin/knowledge/out-of-scope', { preHandler: admin }, async () =>
-    db.prepare('SELECT * FROM out_of_scope ORDER BY id').all(),
-  );
-
-  app.post('/api/admin/knowledge/out-of-scope/upload', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.(xlsx|txt|md|csv)$/i);
-    if (!up) return;
-    try {
-      const items = await parseOutOfScope(up.buffer, up.filename);
-      replaceOutOfScope(db, items);
-      audit(db, req.user, '답변범위 외 목록 교체', up.filename, `${items.length}건`);
-      kb.rebuild();
-      return { ok: true, count: items.length };
-    } catch (e) {
-      return fail(reply, e);
-    }
-  });
-
   // ----- 지침·FAQ 원문 -----
   app.get('/api/admin/knowledge/guidelines', { preHandler: admin }, async () => listGuidelineDocs(db));
 
@@ -207,25 +177,4 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
     return { ok: true };
   });
 
-  // ----- 검색 시험: 질문을 넣으면 어떤 근거가 몇 점으로 찾아지는지 보여준다 -----
-  app.post('/api/admin/knowledge/search-test', { preHandler: admin }, async (req, reply) => {
-    const b = (req.body ?? {}) as Record<string, unknown>;
-    const query = str(b.query);
-    const businessType = str(b.business_type) || '모름';
-    if (!query) return reply.code(400).send({ error: '질문을 입력해 주세요.' });
-    if (!(BUSINESS_TYPES as readonly string[]).includes(businessType)) return reply.code(400).send({ error: '사업 유형이 올바르지 않습니다.' });
-    const r = await kb.search(query, businessType);
-    const fmt = <T>(h: { doc: T; keyword: number; semantic: number | null; relevant: boolean }) => ({
-      keyword: Math.round(h.keyword * 1000) / 1000,
-      semantic: h.semantic === null ? null : Math.round(h.semantic * 1000) / 1000,
-      relevant: h.relevant,
-    });
-    return {
-      mode: r.mode,
-      passed: r.passed,
-      qa: r.qa.map((h) => ({ ...fmt(h), qa_id: h.doc.qa_id, category1: h.doc.category1, question: h.doc.question })),
-      guideline: r.guideline.map((h) => ({ ...fmt(h), doc_name: h.doc.doc_name, clause: h.doc.clause, page: h.doc.page })),
-      out_of_scope: r.outOfScope ? { ...fmt(r.outOfScope), question: r.outOfScope.doc.question } : null,
-    };
-  });
 }

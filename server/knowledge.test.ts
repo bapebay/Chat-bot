@@ -120,7 +120,7 @@ test('지침 원문을 조항 단위로 나누고 쪽수를 기록', () => {
 });
 
 test('표준 Q&A 업로드 → 미리보기(경고) → 적용 → 검색형 답변과 근거 카드', async () => {
-  const { app, cookie, calls, db } = await setup();
+  const { app, cookie, calls, db, kb } = await setup();
   const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', ...(await qaUpload(cookie, 'qa.xlsx')) });
   assert.equal(up.statusCode, 200, up.body);
   const v = up.json();
@@ -148,11 +148,12 @@ test('표준 Q&A 업로드 → 미리보기(경고) → 적용 → 검색형 답
   assert.equal(m.citations.retrieved.qa[0].qa_id, 'B4-01-a');
 
   // 미검수 답안은 기본적으로 검색에서 빠지고, 설정을 켜면 들어온다
-  const before = await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie }, payload: { query: '실험장비 구입 사전 승인' } });
-  assert.ok(!before.json().qa.some((q: { qa_id: string }) => q.qa_id === 'D1-01-a'));
+  const before = await kb.search('실험장비 구입 사전 승인', '모름');
+  assert.ok(!before.qa.some((h) => h.doc.qa_id === 'D1-01-a'));
   await app.inject({ method: 'PUT', url: '/api/admin/settings/include_unreviewed', headers: { cookie }, payload: { value: 'true' } });
-  const after = await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie }, payload: { query: '실험장비 구입 사전 승인' } });
-  assert.equal(after.json().qa[0].qa_id, 'D1-01-a');
+  kb.rebuild();
+  const after = await kb.search('실험장비 구입 사전 승인', '모름');
+  assert.equal(after.qa[0].doc.qa_id, 'D1-01-a');
 
   // 엑셀 내보내기
   const ex = await app.inject({ url: `/api/admin/knowledge/qa/versions/${v.id}/export`, headers: { cookie } });
@@ -170,17 +171,13 @@ test('표준 Q&A 업로드 → 미리보기(경고) → 적용 → 검색형 답
   assert.deepEqual(statuses, [{ id: v.id, status: 'active' }, { id: up2.json().id, status: 'archived' }]);
 });
 
-test('근거 없는 질문은 모델을 부르지 않고 근거없음, 범위 외 질문은 답변범위외', async () => {
+test('근거 없는 질문은 모델을 부르지 않고 근거없음', async () => {
   const { app, cookie, calls } = await setup();
   const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', ...(await qaUpload(cookie, 'qa.xlsx')) });
   await app.inject({ method: 'POST', url: `/api/admin/knowledge/qa/versions/${up.json().id}/activate`, headers: { cookie } });
-  const oos = multipart('oos.txt', Buffer.from('자체평가 실적 인정 기준\n성과지표 달성 실적 인정 여부\n'));
-  assert.equal((await app.inject({ method: 'POST', url: '/api/admin/knowledge/out-of-scope/upload', headers: { cookie, ...oos.headers }, payload: oos.payload })).statusCode, 200);
 
   const none = await ask(app, cookie, '오늘 점심 메뉴 추천해 주세요');
   assert.equal(none.answer_type, '근거없음');
-  const outside = await ask(app, cookie, '성과지표 실적 인정 여부를 알려주세요');
-  assert.equal(outside.answer_type, '답변범위외');
   assert.equal(calls.length, 0);
 });
 
@@ -209,16 +206,16 @@ test('의미 검색 모델이 있으면 혼합 검색으로 동작', async () =>
       });
     },
   };
-  const { app, cookie, db } = await setup(fake);
+  const { app, cookie, db, kb } = await setup(fake);
   const up = await app.inject({ method: 'POST', url: '/api/admin/knowledge/qa/upload', ...(await qaUpload(cookie, 'qa.xlsx')) });
   await app.inject({ method: 'POST', url: `/api/admin/knowledge/qa/versions/${up.json().id}/activate`, headers: { cookie } });
   // 색인 계산이 끝날 때까지 대기
   for (let i = 0; i < 50 && !(await app.inject({ url: '/api/admin/knowledge/status', headers: { cookie } })).json().semantic_ready; i++) {
     await new Promise((r) => setTimeout(r, 20));
   }
-  const r = (await app.inject({ method: 'POST', url: '/api/admin/knowledge/search-test', headers: { cookie }, payload: { query: '사업비 이월 가능?' } })).json();
+  const r = await kb.search('사업비 이월 가능?', '모름');
   assert.equal(r.mode, 'hybrid');
-  assert.equal(r.qa[0].qa_id, 'C2-03-a');
+  assert.equal(r.qa[0].doc.qa_id, 'C2-03-a');
   assert.equal(typeof r.qa[0].semantic, 'number');
   assert.ok((db.prepare('SELECT COUNT(*) AS n FROM embeddings').get() as { n: number }).n > 0);
 });

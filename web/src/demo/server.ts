@@ -5,14 +5,13 @@
 import { Bm25 } from '../../../server/knowledge/bm25';
 import { DEFAULT_SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS, SECURITY_RULES } from '../../../server/defaults';
 import { accountFieldProblem, parseAccountsWorkbook } from '../../../server/accounts-excel';
-import { parseEvalWorkbook } from '../../../server/evaluation-excel';
-import { parseOutOfScope, parsePrinciples, parseQaWorkbook } from '../../../server/knowledge/excel';
+import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
-import { DEMO_GUIDELINE_TEXT, DEMO_OUT_OF_SCOPE, DEMO_PRINCIPLES, REGIONS_17, type DemoQa } from './data';
+import { DEMO_GUIDELINE_TEXT, REGIONS_17, type DemoQa } from './data';
 // 데모 기본 표준답안: 관리자가 올린 '중복질의_통합_표준답안초안_5차' (요청에 따라 기본값으로 내장)
 import DEFAULT_QA from './default-qa.json';
 
@@ -56,7 +55,6 @@ const TIER_LABEL: Record<string, string> = { quick: '빠름 (Haiku급)', default
 const settings: Record<string, string> = {
   system_prompt: DEFAULT_SYSTEM_PROMPT,
   disclaimer: '본 답변은 사업비 지침과 기존 질의응답에 근거한 안내이며, 구체적인 집행 인정 여부는 상위보조사업자(지역앵커센터)의 판단에 따릅니다.',
-  principles: DEMO_PRINCIPLES,
   include_unreviewed: 'false',
   threshold_keyword: '0.5',
   threshold_semantic: '0.83',
@@ -64,7 +62,6 @@ const settings: Record<string, string> = {
   top_k_guideline: '3',
   daily_limit_user: '50',
   daily_limit_total: '3000',
-  eval_pass_hit_rate: '0.8',
   price_input_per_mtok: '0.10',
   price_output_per_mtok: '0.50',
   usd_krw: '1400',
@@ -107,8 +104,6 @@ const qaVersions: Json[] = [
 ];
 let qaItems: Json[] = (DEFAULT_QA.items as DemoQa[]).map((q) => ({ id: nextId(), version_id: qaVersionId, needs_recheck: 0, ...q }));
 
-/** 표준답안의 대분류(예: '순수앵커; 글로컬')에서 첫 사업 유형 */
-const firstBusinessType = (c1: string) => BUSINESS_TYPES.find((b) => c1.split(/[;,]/)[0].includes(b)) ?? '모름';
 /** 중분류마다 첫 표준답안 (예시 대화·예시 평가 질문용) */
 const PER_CATEGORY: DemoQa[] = [...new Map((DEFAULT_QA.items as DemoQa[]).map((q) => [q.category2, q] as const)).values()];
 const qaRevisions: Json[] = [];
@@ -126,7 +121,8 @@ const guidelineChunks: Json[] = [];
     } else if (cur) cur.text += `\n${line}`;
   }
 }
-let outOfScope = DEMO_OUT_OF_SCOPE.map((o) => ({ id: nextId(), ...o }));
+// 답변범위 외 목록 기능은 없앴다 (점검표 결정). 검색 코드는 빈 목록으로 둔다
+let outOfScope: Json[] = [];
 
 
 const notices: Json[] = [{ id: nextId(), title: '[데모] 사업비 지침 개정 안내 (가상)', body: '보직수당 1인당 한도 기준이 변경되었습니다. 관련 답안은 재검수 중입니다.', active: 1, created_at: ago(60 * 24) }];
@@ -145,10 +141,6 @@ const messages: Json[] = [];
 const feedback: Json[] = [];
 const reviewQueue: Json[] = [];
 const inquiries: Json[] = [];
-const evalSets: Json[] = [];
-const evalItems: Json[] = [];
-const evalRuns: Json[] = [];
-const evalResults: Json[] = [];
 
 // ================= 검색 (실제 서버의 BM25·핵심어 비율 사용) =================
 const num = (k: string) => Number(settings[k]);
@@ -245,9 +237,7 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     qa: r.qa.map((h: Json) => ({ qa_id: h.doc.qa_id, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
     guideline: r.guideline.map((h: Json, i: number) => ({ id: `G${i + 1}`, clause: h.doc.clause, keyword: round(h.keyword), semantic: null, relevant: h.relevant })),
   };
-  const v = qaVersions.find((x) => x.status === 'active');
-  const basis = v ? { qa_version: String(v.filename).replace(/\.xlsx$/i, ''), applied_at: v.activated_at } : null;
-  const base = { business_type: null, referral: null as string | null, qa: [] as Json[], guideline: [] as Json[], out_of_scope: null as Json, basis, retrieved };
+  const base = { business_type: null, referral: null as string | null, qa: [] as Json[], guideline: [] as Json[], out_of_scope: null as Json, retrieved };
   const best = Math.max(r.qa.find((h: Json) => h.relevant)?.keyword ?? 0, r.guideline.find((h: Json) => h.relevant)?.keyword ?? 0);
   if (r.outOfScope && r.outOfScope.keyword >= best) {
     const o = r.outOfScope.doc;
@@ -382,8 +372,7 @@ async function answerWithAi(history: Json[], businessType: string, question: str
   const testResult = { ...t, provider: 'demo', modelName: 'test-model', latency: 900 + Math.round(Math.random() * 600) };
   if (!t.model || !ai) return testResult;
   const r = t.r;
-  const principles = settings.principles.trim();
-  const system = [settings.system_prompt, principles ? `# 답변 원칙 (담당자가 검수하며 정한 기준, 항상 지킨다)\n${principles}` : '', SECURITY_RULES, OUTPUT_INSTRUCTIONS]
+  const system = [settings.system_prompt, SECURITY_RULES, OUTPUT_INSTRUCTIONS]
     .filter(Boolean)
     .join('\n\n');
   let recent = history.slice(-6);
@@ -537,173 +526,6 @@ function transcript(convId: number) {
     .join('\n\n');
 }
 
-// ================= 평가 =================
-function runEval(setId: number, label: string) {
-  const items = evalItems.filter((i) => i.set_id === setId);
-  const run: Json = {
-    id: nextId(),
-    set_id: setId,
-    label,
-    status: 'running',
-    total: items.length,
-    done: 0,
-    config: {
-      provider: 'demo',
-      model: 'test-model',
-      qa_version: `#${qaVersions.find((v) => v.status === 'active')?.id ?? '-'} ${qaVersions.find((v) => v.status === 'active')?.filename ?? '없음'}`,
-      prompt: revisions.filter((r) => r.key === 'system_prompt').length ? `이력 #${revisions.filter((r) => r.key === 'system_prompt').at(-1)!.id}` : '기본값',
-      prompt_hash: '-',
-      include_unreviewed: settings.include_unreviewed === 'true',
-      threshold_keyword: num('threshold_keyword'),
-      threshold_semantic: num('threshold_semantic'),
-      search_mode: '키워드',
-    },
-    summary: null,
-    error: null,
-    started_by_name: users.find((u) => u.id === currentUserId)?.username ?? 'admin',
-    started_at: ts(),
-    finished_at: null,
-  };
-  evalRuns.push(run);
-  if (ai) {
-    void runEvalWithAi(run, items);
-    return run;
-  }
-  for (const it of items) {
-    const a = generateAnswer([], it.business_type, it.question);
-    const cited = a.citations.qa.map((q: Json) => q.qa_id);
-    const retrieved = a.citations.retrieved.qa.map((q: Json) => q.qa_id);
-    const exp = it.expected_qa_ids as string[];
-    evalResults.push({
-      id: nextId(),
-      run_id: run.id,
-      item_id: it.id,
-      answer_type: a.answerType,
-      answer: a.text,
-      cited_qa_ids: cited,
-      retrieved_qa_ids: retrieved,
-      cite_hit: exp.length ? Number(exp.some((x) => cited.includes(x))) : null,
-      retrieve_hit: exp.length ? Number(exp.some((x) => retrieved.includes(x))) : null,
-      type_match: it.expected_type ? Number(it.expected_type === a.answerType) : null,
-      input_tokens: a.model ? 3600 : null,
-      output_tokens: a.model ? 300 : null,
-      latency_ms: a.model ? 1100 : 30,
-      error: null,
-      verdict: null,
-      verdict_note: '',
-    });
-  }
-  // 진행 막대가 움직이도록 조금씩 완료 처리
-  const timer = setInterval(() => {
-    run.done = Math.min(run.total, run.done + 1);
-    if (run.done >= run.total || run.status !== 'running') {
-      clearInterval(timer);
-      if (run.status === 'running') run.status = 'done';
-      run.finished_at = ts();
-      run.summary = summarize(run.id);
-      notifyChange();
-    }
-  }, 350);
-  return run;
-}
-
-function evalRow(run: Json, it: Json, a: Json, error: string | null = null) {
-  const cited = a ? a.citations.qa.map((q: Json) => q.qa_id) : [];
-  const retrieved = a ? a.citations.retrieved.qa.map((q: Json) => q.qa_id) : [];
-  const exp = it.expected_qa_ids as string[];
-  return {
-    id: nextId(),
-    run_id: run.id,
-    item_id: it.id,
-    answer_type: a?.answerType ?? null,
-    answer: a?.text ?? '',
-    cited_qa_ids: cited,
-    retrieved_qa_ids: retrieved,
-    cite_hit: exp.length ? Number(exp.some((x) => cited.includes(x))) : null,
-    retrieve_hit: exp.length ? Number(exp.some((x) => retrieved.includes(x))) : null,
-    type_match: it.expected_type ? Number(!!a && it.expected_type === a.answerType) : null,
-    input_tokens: a?.inputTokens ?? null,
-    output_tokens: a?.outputTokens ?? null,
-    latency_ms: a?.latency ?? null,
-    error,
-    verdict: null,
-    verdict_note: '',
-  };
-}
-
-/** 실제 AI로 평가: 한 문항씩 차례로 부른다 (한꺼번에 부르면 사용 한도에 걸림) */
-async function runEvalWithAi(run: Json, items: Json[]) {
-  run.config.provider = 'claude.ai';
-  run.config.model = `Claude ${TIER_LABEL[settings.demo_model_tier] ?? ''}`;
-  for (const it of items) {
-    if (run.status !== 'running') break;
-    try {
-      evalResults.push(evalRow(run, it, await answerWithAi([], it.business_type, it.question)));
-    } catch (e) {
-      evalResults.push(evalRow(run, it, null, (e as Error).message));
-    }
-    run.done++;
-  }
-  if (run.status === 'running') run.status = 'done';
-  run.finished_at = ts();
-  run.summary = summarize(run.id);
-  notifyChange();
-}
-
-function summarize(runId: number) {
-  const rows = evalResults.filter((r) => r.run_id === runId).map((r) => ({ ...r, expected_type: evalItems.find((i) => i.id === r.item_id)?.expected_type }));
-  const rate = (n: number, d: number) => (d ? round(n / d) : null);
-  const cite = rows.filter((r) => r.cite_hit !== null);
-  const retr = rows.filter((r) => r.retrieve_hit !== null);
-  const typed = rows.filter((r) => r.type_match !== null);
-  const refer = typed.filter((r) => r.expected_type && r.expected_type !== '근거답변');
-  const citeRate = rate(cite.filter((r) => r.cite_hit).length, cite.length);
-  const wrong = rows.filter((r) => r.verdict === 'wrong').length;
-  const unreviewed = rows.filter((r) => r.answer_type === '근거답변' && !r.verdict).length;
-  const passHit = num('eval_pass_hit_rate');
-  const scoreOk = citeRate !== null && citeRate >= passHit && wrong === 0 && rows.every((r) => !r.error);
-  return {
-    total: rows.length,
-    errors: rows.filter((r) => r.error).length,
-    cite_hit_rate: citeRate,
-    cite_hit: cite.filter((r) => r.cite_hit).length,
-    cite_total: cite.length,
-    retrieve_hit_rate: rate(retr.filter((r) => r.retrieve_hit).length, retr.length),
-    type_accuracy: rate(typed.filter((r) => r.type_match).length, typed.length),
-    type_match: typed.filter((r) => r.type_match).length,
-    type_total: typed.length,
-    referral_accuracy: rate(refer.filter((r) => r.type_match).length, refer.length),
-    wrong,
-    unreviewed,
-    input_tokens: rows.reduce((s, r) => s + (r.input_tokens ?? 0), 0),
-    output_tokens: rows.reduce((s, r) => s + (r.output_tokens ?? 0), 0),
-    avg_latency_ms: 800,
-    pass_hit_rate: passHit,
-    awaiting_review: scoreOk && unreviewed > 0,
-    passed: scoreOk && unreviewed === 0,
-  };
-}
-
-{
-  const set = { id: nextId(), name: '예시 평가 질문집 (5차 표준답안 기준)', filename: '예시_평가질문집.xlsx', created_at: ago(60 * 24 * 2) };
-  evalSets.push(set);
-  // 예시 평가 질문: 중분류별 대표 질의 6개(기대 통합번호 = 그 답안) + 범위 외 + 근거 없음
-  const evalSeed = [
-    ...PER_CATEGORY.slice(0, 6).map((q) => ({ question: q.question, business_type: firstBusinessType(q.category1), expected: [q.qa_id], type: q.is_referral ? '연결형' : '근거답변' })),
-    { question: '자체평가 실적으로 인정되나요?', business_type: '모름', expected: [] as string[], type: '답변범위외' },
-    { question: '사업단 워크숍 숙소 예약 방법은?', business_type: '모름', expected: [] as string[], type: '근거없음' },
-  ];
-  evalSeed.forEach((e, i) =>
-    evalItems.push({ id: nextId(), set_id: set.id, seq: i + 1, question: e.question, business_type: e.business_type, expected_qa_ids: e.expected, expected_type: e.type, note: '' }),
-  );
-  const r = runEval(set.id, '기준선');
-  r.done = r.total;
-  r.status = 'done';
-  r.started_at = ago(60 * 24);
-  r.finished_at = ago(60 * 24 - 2);
-  r.summary = summarize(r.id);
-}
-
 // ================= 라우터 =================
 type Handler = (p: { params: string[]; body: Json; query: URLSearchParams; me: Json }) => Json | Promise<Json>;
 const routes: { method: string; re: RegExp; role: 'none' | 'user' | 'admin'; handler: Handler }[] = [];
@@ -813,11 +635,6 @@ route('PUT', '/api/messages/:id/feedback', 'user', ({ me, params, body }) => {
     else reviewQueue.push({ id: nextId(), message_id: m.id, source: 'bad', status: 'pending', resolution: null, qa_id: null, note: '', resolved_by: null, created_at: ts(), resolved_at: null });
   } else if (q && q.source === 'bad' && q.status === 'pending') reviewQueue.splice(reviewQueue.indexOf(q), 1);
   return { ok: true };
-});
-route('GET', '/api/suggestions', 'user', () => {
-  const seen = new Map<string, string>();
-  for (const q of activeQa()) if (q.category2 && !seen.has(q.category2) && q.question.length <= 60) seen.set(q.category2, q.question);
-  return [...seen.entries()].slice(0, 8).map(([category, question]) => ({ category, question }));
 });
 route('GET', '/api/notices', 'user', () => notices.filter((n) => n.active).slice(0, 3));
 
@@ -1009,10 +826,6 @@ route('PATCH', '/api/admin/users/:id', 'admin', ({ params, body }) => {
   u.role = body.role;
   return { ok: true };
 });
-route('POST', '/api/admin/users/:id/unlock', 'admin', ({ params }) => {
-  Object.assign(userOr404(params[0]), { locked: false, failed_attempts: 0 });
-  return { ok: true };
-});
 route('POST', '/api/admin/users/:id/reset-password', 'admin', ({ params }) => {
   audit('비밀번호 초기화', userOr404(params[0]).username);
   return { ok: true, temp_password: DEMO_PASSWORD };
@@ -1046,7 +859,7 @@ route('PUT', '/api/admin/settings/:key', 'admin', ({ me, params, body }) => {
   const key = params[0];
   const value = String(body.value ?? '').trim();
   if (!(key in settings)) throw new HttpError(404, '알 수 없는 설정입니다.');
-  if (/^(threshold|eval_pass)/.test(key) && !(Number(value) >= 0 && Number(value) <= 1)) throw new HttpError(400, '0과 1 사이의 숫자를 입력하세요.');
+  if (/^threshold/.test(key) && !(Number(value) >= 0 && Number(value) <= 1)) throw new HttpError(400, '0과 1 사이의 숫자를 입력하세요.');
   if (['system_prompt', 'disclaimer'].includes(key) && !value) throw new HttpError(400, '내용이 비어 있습니다.');
   settings[key] = value;
   revisions.push({ id: nextId(), key, value, changed_by: me.username, created_at: ts() });
@@ -1163,44 +976,6 @@ route('POST', '/api/admin/knowledge/guidelines/upload', 'admin', async ({ body }
   audit('지침·FAQ 업로드', doc.name, `${chunks.length}개 조항`);
   return { ok: true, id: doc.id, chunk_count: chunks.length };
 });
-route('POST', '/api/admin/knowledge/out-of-scope/upload', 'admin', async ({ body }) => {
-  const f = await readFile(body, /\.(xlsx|txt|md|csv)$/i);
-  let items;
-  try {
-    items = /\.xlsx$/i.test(f.name)
-      ? await parseOutOfScope(asBuffer(f.buf), f.name)
-      : textOf(f.buf).split(/\r?\n/).map((l) => l.replace(/^[-*\d.)\s]+/, '').trim()).filter(Boolean).map((question) => ({ question, guidance: '', department: '' }));
-  } catch (e) {
-    throw bad(e);
-  }
-  outOfScope = items.map((o) => ({ id: nextId(), ...o }));
-  audit('답변범위 외 목록 교체', f.name, `${items.length}건`);
-  return { ok: true, count: items.length };
-});
-route('POST', '/api/admin/knowledge/principles/parse', 'admin', async ({ body }) => {
-  const f = await readFile(body, /\.(xlsx|txt|md)$/i);
-  try {
-    return { text: /\.xlsx$/i.test(f.name) ? await parsePrinciples(asBuffer(f.buf), f.name) : textOf(f.buf).trim() };
-  } catch (e) {
-    throw bad(e);
-  }
-});
-route('POST', '/api/admin/eval/sets', 'admin', async ({ body }) => {
-  const f = await readFile(body, /\.xlsx$/i);
-  let parsed;
-  try {
-    parsed = await parseEvalWorkbook(asBuffer(f.buf));
-  } catch (e) {
-    throw bad(e);
-  }
-  const set = { id: nextId(), name: (f.field('name') || f.name.replace(/\.[^.]+$/, '')).slice(0, 100), filename: f.name, created_at: ts() };
-  evalSets.push(set);
-  parsed.items.forEach((e, i) =>
-    evalItems.push({ id: nextId(), set_id: set.id, seq: i + 1, question: e.question, business_type: e.business_type, expected_qa_ids: e.expected_qa_ids, expected_type: e.expected_type, note: e.note }),
-  );
-  return { id: set.id, count: parsed.items.length, warnings: parsed.warnings };
-});
-route('GET', '/api/admin/knowledge/out-of-scope', 'admin', () => outOfScope);
 route('GET', '/api/admin/knowledge/guidelines', 'admin', () => guidelineDocs.map((d) => ({ ...d, chunk_count: guidelineChunks.filter((c) => c.doc_id === d.id).length })));
 route('GET', '/api/admin/knowledge/guidelines/:id/chunks', 'admin', ({ params }) => guidelineChunks.filter((c) => c.doc_id === Number(params[0])));
 route('PATCH', '/api/admin/knowledge/guidelines/:id', 'admin', ({ params, body }) => {
@@ -1216,65 +991,6 @@ route('DELETE', '/api/admin/knowledge/guidelines/:id', 'admin', ({ params }) => 
   guidelineDocs.splice(guidelineDocs.indexOf(d), 1);
   audit('지침 문서 삭제', d.name);
   return { ok: true };
-});
-route('POST', '/api/admin/knowledge/search-test', 'admin', ({ body }) => {
-  const r = search(String(body.query ?? ''), body.business_type || '모름');
-  const f = (h: Json) => ({ keyword: round(h.keyword), semantic: null, relevant: h.relevant });
-  return {
-    mode: r.mode,
-    passed: r.passed,
-    qa: r.qa.map((h: Json) => ({ ...f(h), qa_id: h.doc.qa_id, category1: h.doc.category1, question: h.doc.question })),
-    guideline: r.guideline.map((h: Json) => ({ ...f(h), doc_name: h.doc.doc_name, clause: h.doc.clause, page: h.doc.page })),
-    out_of_scope: r.outOfScope ? { ...f(r.outOfScope), question: r.outOfScope.doc.question } : null,
-  };
-});
-
-// ----- 관리: 평가 -----
-route('GET', '/api/admin/eval/sets', 'admin', () =>
-  evalSets.map((s) => ({ ...s, item_count: evalItems.filter((i) => i.set_id === s.id).length, run_count: evalRuns.filter((r) => r.set_id === s.id).length })),
-);
-route('DELETE', '/api/admin/eval/sets/:id', 'admin', ({ params }) => {
-  const set = byId(evalSets, params[0]);
-  if (!set) throw new HttpError(404, '평가 질문집을 찾을 수 없습니다.');
-  if (evalRuns.some((r) => r.set_id === set.id && r.status === 'running')) throw new HttpError(409, '평가가 실행 중입니다.');
-  evalSets.splice(evalSets.indexOf(set), 1);
-  return { ok: true };
-});
-route('POST', '/api/admin/eval/sets/:id/runs', 'admin', ({ params, body }) => {
-  if (evalRuns.some((r) => r.status === 'running')) throw new HttpError(409, '이미 실행 중인 평가가 있습니다.');
-  return runEval(Number(params[0]), body.label || '데모 실행');
-});
-route('GET', '/api/admin/eval/runs', 'admin', () => [...evalRuns].sort((a, b) => b.id - a.id));
-route('GET', '/api/admin/eval/runs/:id', 'admin', ({ params }) => {
-  const run = byId(evalRuns, params[0]);
-  if (!run) throw new HttpError(404, '평가 실행을 찾을 수 없습니다.');
-  const items = evalItems.filter((i) => i.set_id === run.set_id).sort((a, b) => a.seq - b.seq);
-  const results = items
-    .slice(0, run.done)
-    .map((i) => ({ i, r: evalResults.find((x) => x.run_id === run.id && x.item_id === i.id) }))
-    .filter(({ r }) => r)
-    .map(({ i, r }) => ({ ...r, seq: i.seq, question: i.question, business_type: i.business_type, expected_qa_ids: i.expected_qa_ids, expected_type: i.expected_type, note: i.note }));
-  return { run: { ...run, summary: run.status === 'running' ? summarize(run.id) : run.summary }, results };
-});
-route('POST', '/api/admin/eval/runs/:id/cancel', 'admin', ({ params }) => {
-  const r = byId(evalRuns, params[0]);
-  if (r?.status === 'running') r.status = 'cancelled';
-  return { ok: true };
-});
-route('DELETE', '/api/admin/eval/runs/:id', 'admin', ({ params }) => {
-  const r = byId(evalRuns, params[0]);
-  if (r) evalRuns.splice(evalRuns.indexOf(r), 1);
-  return { ok: true };
-});
-route('PATCH', '/api/admin/eval/results/:id', 'admin', ({ params, body }) => {
-  const r = byId(evalResults, params[0]);
-  if (!r) throw new HttpError(404, '결과를 찾을 수 없습니다.');
-  r.verdict = body.verdict === 'ok' || body.verdict === 'wrong' ? body.verdict : null;
-  r.verdict_note = body.note ?? '';
-  const run = byId(evalRuns, r.run_id)!;
-  const summary = summarize(run.id);
-  if (run.status !== 'running') run.summary = summary;
-  return { ok: true, summary };
 });
 
 // ----- 관리: 통계·답변·공지·감사 -----
@@ -1411,7 +1127,7 @@ export function onResetStorage(fn: () => Promise<void>) {
   resetStorage = fn;
 }
 
-const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries, evalSets, evalItems, evalRuns, evalResults };
+const LISTS = { revisions, users, qaVersions, qaRevisions, guidelineDocs, guidelineChunks, notices, auditLogs, conversations, messages, feedback, reviewQueue, inquiries };
 export function exportState(): Json {
   return {
     v: 1,
@@ -1420,7 +1136,6 @@ export function exportState(): Json {
     qaVersionId,
     qaItems,
     outOfScope,
-    // 실행 중이던 평가는 저장 시점의 모습으로 남기되, 다시 열면 '중단'으로 보이게 한다
     ...Object.fromEntries(Object.entries(LISTS).map(([k, v]) => [k, v])),
   };
 }
@@ -1430,7 +1145,6 @@ export function importState(st: Json): void {
   Object.assign(settings, st.settings ?? {});
   qaVersionId = st.qaVersionId ?? qaVersionId;
   qaItems = st.qaItems ?? qaItems;
-  outOfScope = st.outOfScope ?? outOfScope;
   for (const [k, list] of Object.entries(LISTS) as [string, Json[]][]) {
     if (Array.isArray(st[k])) list.splice(0, list.length, ...st[k]);
   }
@@ -1439,9 +1153,6 @@ export function importState(st: Json): void {
   for (const u of users.filter((x) => x.role === 'reviewer')) users.splice(users.indexOf(u), 1);
   const demoUser = users.find((u) => u.username === 'user');
   if (demoUser) demoUser.business_type = '모름';
-  for (const r of evalRuns) {
-    if (r.status === 'running') Object.assign(r, { status: 'cancelled', error: '페이지를 닫아 중단되었습니다.', summary: summarize(r.id) });
-  }
 }
 
 // ================= 요청 처리 =================
