@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import type { DB } from './db.js';
 import { OUTPUT_INSTRUCTIONS, SECURITY_RULES } from './defaults.js';
+import { principleContext } from './knowledge/principles.js';
 import { qaSearchText, strength, TOP_K_PRINCIPLE, type GuidelineDoc, type Hit, type KnowledgeBase, type QaDoc, type SearchResult } from './knowledge/index.js';
 import { QUERY_STOP_TOKENS, tokenize } from './knowledge/text.js';
 import { looksLikeFollowUp } from './knowledge/followup.js';
@@ -110,18 +111,7 @@ export function buildContext(result: SearchResult): string {
     const d = h.doc;
     parts.push(`[지침 및 FAQ ${guidelineKey(h, i)} | ${clean(d.clause)} | 문서: ${clean(d.doc_name)} | 쪽: ${d.page ?? ''}]\n${d.text}`);
   });
-  result.principle.forEach((h, i) => {
-    const d = h.doc;
-    parts.push(
-      [
-        `[집행원리 P${i + 1} | 번호: ${clean(d.code)} | 분야: ${clean(d.category) || '-'} | 재원: ${clean(d.funding) || '-'} | 적용 시기: ${clean(d.period) || '-'}]`,
-        d.text,
-        d.note ? `비고: ${d.note}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    );
-  });
+  result.principle.forEach((h, i) => parts.push(principleContext(h.doc, i)));
   for (const h of result.qa) {
     const d = h.doc;
     parts.push(

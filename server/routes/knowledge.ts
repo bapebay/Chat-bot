@@ -20,6 +20,7 @@ import {
   listPrincipleSets,
   savePrincipleSet,
 } from '../knowledge/store.js';
+import { combineQaFiles, isQaMarkdown, MAX_QA_FILES, parseQaMarkdown } from '../knowledge/qa-markdown.js';
 import { parsePrinciplesCsv, principlesTemplateCsv } from '../knowledge/principles.js';
 import { idParam, str } from './util.js';
 
@@ -54,6 +55,43 @@ export async function readUpload(req: FastifyRequest, reply: FastifyReply, exts:
     if (f && f.type === 'field') fields[k] = String(f.value ?? '');
   }
   return { filename, buffer, fields };
+}
+
+/** 여러 파일 받기 (표준 Q&A 파트별 파일). 파일마다 15MB, 모두 합쳐 60MB까지 */
+const MAX_TOTAL_UPLOAD = 60 * 1024 * 1024;
+export async function readUploads(req: FastifyRequest, reply: FastifyReply, exts: RegExp) {
+  const files: { filename: string; buffer: Buffer }[] = [];
+  let total = 0;
+  try {
+    for await (const part of req.files()) {
+      const filename = part.filename || 'upload';
+      if (!exts.test(filename)) {
+        part.file.resume();
+        reply.code(400).send({ error: `지원하지 않는 파일 형식입니다: ${filename}` });
+        return null;
+      }
+      const buffer = await part.toBuffer();
+      if (part.file.truncated) {
+        reply.code(400).send({ error: `파일이 너무 큽니다 (파일마다 15MB 이하): ${filename}` });
+        return null;
+      }
+      total += buffer.length;
+      if (total > MAX_TOTAL_UPLOAD) {
+        reply.code(400).send({ error: '한 번에 올리는 파일은 모두 합쳐 60MB 이하로 해 주세요.' });
+        return null;
+      }
+      files.push({ filename, buffer });
+    }
+  } catch (e) {
+    const tooMany = (e as { code?: string }).code === 'FST_FILES_LIMIT';
+    reply.code(400).send({ error: tooMany ? `한 번에 ${MAX_QA_FILES}개 파일까지 올릴 수 있습니다.` : '파일을 받지 못했습니다. 다시 시도해 주세요.' });
+    return null;
+  }
+  if (!files.length) {
+    reply.code(400).send({ error: '파일을 선택해 주세요.' });
+    return null;
+  }
+  return files;
 }
 
 export function sendXlsx(reply: FastifyReply, buffer: Buffer, filename: string) {
@@ -96,12 +134,22 @@ export function knowledgeRoutes(app: FastifyInstance, db: DB, kb: KnowledgeBase)
   );
 
   app.post('/api/admin/knowledge/qa/upload', { preHandler: admin }, async (req, reply) => {
-    const up = await readUpload(req, reply, /\.xlsx$/i);
-    if (!up) return;
+    const files = await readUploads(req, reply, /\.(xlsx|md|markdown)$/i);
+    if (!files) return;
     try {
-      const { items, warnings } = await parseQaWorkbook(up.buffer);
-      const id = createQaDraft(db, up.filename, req.user.id, items, warnings);
-      audit(db, req.user, '표준 Q&A 업로드(미리보기)', `#${id} ${up.filename}`, `${items.length}건`);
+      // 파트별로 나눈 여러 파일을 하나의 버전으로 합친다. 한 파일이라도 못 읽으면 그 파일 이름과 함께 알린다
+      const parsed = [];
+      for (const f of files) {
+        try {
+          const r = isQaMarkdown(f.filename) ? parseQaMarkdown(new Uint8Array(f.buffer), f.filename) : await parseQaWorkbook(f.buffer);
+          parsed.push({ name: f.filename, items: r.items, warnings: r.warnings });
+        } catch (e) {
+          throw new Error(files.length > 1 ? `${f.filename}: ${(e as Error).message}` : (e as Error).message);
+        }
+      }
+      const { items, warnings, filename } = combineQaFiles(parsed);
+      const id = createQaDraft(db, filename, req.user.id, items, warnings);
+      audit(db, req.user, '표준 Q&A 업로드(미리보기)', `#${id} ${filename}`, `${files.length}개 파일, ${items.length}건`);
       return listQaVersions(db).find((v) => v.id === id);
     } catch (e) {
       return fail(reply, e);

@@ -22,23 +22,23 @@ export interface UploadWarning {
   message: string;
 }
 
-type Field = Exclude<keyof ParsedQaItem, 'row' | 'is_referral' | 'referral_answer'> | 'referral';
+export type QaField = Exclude<keyof ParsedQaItem, 'row' | 'is_referral' | 'referral_answer'> | 'referral';
 
 // 엑셀 머리글(공백·괄호 무시) → 필드
-const QA_HEADERS: Record<Field, string[]> = {
-  qa_id: ['통합번호', '번호', 'id'],
-  category1: ['대분류', '사업유형'],
-  category2: ['중분류'],
-  category3: ['소분류', '소분류코드'],
-  question: ['대표질의', '대표질문', '질의'],
-  checklist: ['요지체크리스트', '요지', '체크리스트'],
-  answer: ['통합답안', '표준답안', '답안'],
+export const QA_HEADERS: Record<QaField, string[]> = {
+  qa_id: ['통합번호', '번호', 'id', '문항번호', '질문번호', '질의번호', '답안번호', '표준답안번호', '코드', 'no', 'qaid'],
+  category1: ['대분류', '사업유형', '사업', '재원'],
+  category2: ['중분류', '분류', '분야', '구분', '비목', '항목'],
+  category3: ['소분류', '소분류코드', '세분류', '세부분류'],
+  question: ['대표질의', '대표질문', '질의', '질문', '질의내용', '질문내용', '문의내용', '질의사항', 'q', '문'],
+  checklist: ['요지체크리스트', '요지', '체크리스트', '키워드', '질문키워드', '핵심어', '핵심요지'],
+  answer: ['통합답안', '표준답안', '답안', '답변', '답변내용', '회신', '회신내용', '답', 'a'],
   referral: ['연결형답변', '연결형', '연결형여부'],
-  review_status: ['검수상태', '검수'],
-  change_history: ['답변변경이력', '변경이력'],
+  review_status: ['검수상태', '검수', '검수여부'],
+  change_history: ['답변변경이력', '변경이력', '이력'],
 };
 
-function normHeader(s: string): string {
+export function normHeader(s: string): string {
   return s.replace(/\(.*?\)/g, '').replace(/\s/g, '').toLowerCase();
 }
 
@@ -89,23 +89,18 @@ function maskSample(s: string): string {
   return s.length <= 4 ? '****' : `${s.slice(0, 3)}${'*'.repeat(Math.min(8, s.length - 3))}`;
 }
 
-/** 표준 Q&A 엑셀('통합질의' 시트)을 읽는다 */
-export async function parseQaWorkbook(buffer: Buffer): Promise<{ items: ParsedQaItem[]; warnings: UploadWarning[]; sheetName: string }> {
-  const wb = await loadWorkbook(buffer);
-  const sheet = wb.worksheets.find((s) => s.name.replace(/\s/g, '') === '통합질의') ?? wb.worksheets[0];
-  if (!sheet) throw new Error('엑셀에 시트가 없습니다.');
-  const found = findColumns(sheet, QA_HEADERS, ['qa_id', 'question', 'answer']);
-  if (!found) {
-    throw new Error(`'${sheet.name}' 시트에서 머리글(통합번호·대표 질의·통합 답안)을 찾지 못했습니다. ‘통합질의’ 시트 형식을 확인해 주세요.`);
-  }
-  const { headerRow, cols } = found;
+/** 표준답안 한 행: 필드 이름으로 칸 글자를 꺼낸다 (엑셀·MD 공통) */
+export interface QaRow {
+  row: number;
+  get: (f: QaField) => string;
+}
+
+/** 행 목록을 표준답안으로 바꾼다. 빈 칸·중복 번호·개인정보 경고는 엑셀과 MD가 같은 규칙 */
+export function collectQaItems(rows: QaRow[]): { items: ParsedQaItem[]; warnings: UploadWarning[] } {
   const items: ParsedQaItem[] = [];
   const warnings: UploadWarning[] = [];
   const seen = new Set<string>();
-
-  for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
-    const row = sheet.getRow(r);
-    const get = (f: Field) => (cols[f] ? cellText(row.getCell(cols[f]!)) : '');
+  for (const { row: r, get } of rows) {
     const qa_id = get('qa_id');
     const question = get('question');
     const answer = get('answer');
@@ -137,6 +132,25 @@ export async function parseQaWorkbook(buffer: Buffer): Promise<{ items: ParsedQa
     }
     items.push(item);
   }
+  return { items, warnings };
+}
+
+/** 표준 Q&A 엑셀('통합질의' 시트)을 읽는다 */
+export async function parseQaWorkbook(buffer: Buffer): Promise<{ items: ParsedQaItem[]; warnings: UploadWarning[]; sheetName: string }> {
+  const wb = await loadWorkbook(buffer);
+  const sheet = wb.worksheets.find((s) => s.name.replace(/\s/g, '') === '통합질의') ?? wb.worksheets[0];
+  if (!sheet) throw new Error('엑셀에 시트가 없습니다.');
+  const found = findColumns(sheet, QA_HEADERS, ['qa_id', 'question', 'answer']);
+  if (!found) {
+    throw new Error(`'${sheet.name}' 시트에서 머리글(통합번호·대표 질의·통합 답안)을 찾지 못했습니다. ‘통합질의’ 시트 형식을 확인해 주세요.`);
+  }
+  const { headerRow, cols } = found;
+  const rows: QaRow[] = [];
+  for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    rows.push({ row: r, get: (f) => (cols[f] ? cellText(row.getCell(cols[f]!)) : '') });
+  }
+  const { items, warnings } = collectQaItems(rows);
   if (!items.length) throw new Error('읽을 수 있는 표준답안 행이 없습니다.');
   return { items, warnings, sheetName: sheet.name };
 }

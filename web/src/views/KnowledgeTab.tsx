@@ -57,7 +57,20 @@ function errorText(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
-export function FilePicker({ accept, label, busy, onFile }: { accept: string; label: string; busy?: boolean; onFile: (f: File) => void }) {
+export function FilePicker({
+  accept,
+  label,
+  busy,
+  onFile,
+  onFiles,
+}: {
+  accept: string;
+  label: string;
+  busy?: boolean;
+  onFile?: (f: File) => void;
+  /** 주면 여러 파일을 한 번에 고를 수 있다 */
+  onFiles?: (fs: File[]) => void;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -65,11 +78,14 @@ export function FilePicker({ accept, label, busy, onFile }: { accept: string; la
         ref={ref}
         type="file"
         accept={accept}
+        multiple={!!onFiles}
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
+          const fs = Array.from(e.target.files ?? []);
           e.target.value = '';
-          if (f) onFile(f);
+          if (!fs.length) return;
+          if (onFiles) onFiles(fs);
+          else onFile?.(fs[0]);
         }}
       />
       <button type="button" className="btn-primary" disabled={busy} onClick={() => ref.current?.click()}>
@@ -94,7 +110,7 @@ export function KnowledgeTab() {
   }, [loadStatus]);
 
   const sections: { key: Section; label: string }[] = [
-    { key: 'qa', label: '표준 Q&A 엑셀' },
+    { key: 'qa', label: '표준 Q&A 올리기' },
     { key: 'qa-edit', label: '표준답안 관리' },
     { key: 'guideline', label: '지침·FAQ 원문' },
     { key: 'principle', label: '집행원리' },
@@ -159,14 +175,21 @@ function QaSection({ onChanged }: { onChanged: () => void }) {
     load();
   }, [load]);
 
-  async function upload(f: File) {
+  async function upload(fs: File[]) {
+    if (fs.length > 30) {
+      setMessage({ kind: 'error', text: '한 번에 30개 파일까지 올릴 수 있습니다.' });
+      return;
+    }
     setBusy(true);
     setMessage(null);
     const form = new FormData();
-    form.append('file', f);
+    for (const f of fs) form.append('file', f);
     try {
       const v = await api<QaVersion>('/api/admin/knowledge/qa/upload', { body: form });
-      setMessage({ kind: 'success', text: `읽기 완료: ${v.item_count}건. 아래 ‘미리보기’ 버전을 확인한 뒤 [서비스에 적용]을 누르세요.` });
+      setMessage({
+        kind: 'success',
+        text: `읽기 완료: ${fs.length > 1 ? `파일 ${fs.length}개를 합쳐 ` : ''}${v.item_count}건. 아래 ‘미리보기’ 버전을 확인한 뒤 [서비스에 적용]을 누르세요.`,
+      });
       await load();
       setViewing(v);
     } catch (err) {
@@ -204,18 +227,25 @@ function QaSection({ onChanged }: { onChanged: () => void }) {
     <div className="space-y-4">
       <section className="card space-y-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold text-slate-800 dark:text-slate-100">표준 Q&A 엑셀 업로드</h3>
+          <h3 className="font-bold text-slate-800 dark:text-slate-100">표준 Q&A 업로드 (엑셀·MD)</h3>
           <div className="flex gap-2">
             <a className="btn-secondary" href="/api/admin/knowledge/qa/template">
               <Download className="h-4 w-4" /> 양식 받기
             </a>
-            <FilePicker accept=".xlsx" label="엑셀 올리기" busy={busy} onFile={upload} />
+            <FilePicker accept=".xlsx,.md,.markdown" label="엑셀·MD 올리기 (여러 개 가능)" busy={busy} onFiles={upload} />
           </div>
         </div>
         <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-500 dark:text-slate-400">
           <li>‘통합질의’ 시트를 읽습니다. 머리글: 통합번호 · 대분류 · 중분류 · 소분류 · 대표 질의 · 요지 체크리스트 · 통합 답안 · 연결형 답변 · 검수상태 (· 답변 변경 이력)</li>
+          <li>
+            <b>파트별로 나눈 여러 파일</b>(MD·엑셀, 30개까지)을 한 번에 골라 올리면 하나의 버전으로 합칩니다. 파일끼리 통합번호가 겹치면 경고합니다.
+          </li>
+          <li>
+            MD(마크다운)는 ① 질문·답변 열이 있는 표(머리글: 대표 질의·질문·질의 / 통합 답안·답변·답안 등)나 ② 답안마다 ‘질문: …’, ‘답변: …’(또는 Q. / A.) 줄, ③ 질문
+            제목(‘### …나요?’) 아래 답변 본문 모양을 읽습니다. 통합번호가 없으면 ‘파일이름-001’처럼 붙이고, 검수상태 칸이 아예 없는 파일은 모두 ‘확정’으로 봅니다.
+          </li>
           <li>올리면 먼저 ‘미리보기’로 저장됩니다. 건수·경고를 확인한 뒤 [서비스에 적용]을 눌러야 챗봇에 반영됩니다.</li>
-          <li>검수상태가 ‘확정’인 행만 씁니다. 미검수 사용 여부는 ‘검색 설정·시험’에서 바꿀 수 있습니다.</li>
+          <li>검수상태가 ‘확정’인 행만 씁니다. 미검수 사용 여부는 ‘검색 설정’에서 바꿀 수 있습니다.</li>
           <li>개인정보는 비식별 처리된 데이터만 올려 주세요. 전화번호·이메일 등이 보이면 경고합니다.</li>
         </ul>
         {message && <Notice kind={message.kind}>{message.text}</Notice>}
@@ -537,10 +567,13 @@ interface PrincipleItem {
   id: number;
   code: string;
   category: string;
-  funding: string;
-  period: string;
+  subcategory: string;
+  keywords: string;
   text: string;
-  note: string;
+  detail: string;
+  caution: string;
+  referral: string;
+  basis: string;
 }
 
 function PrincipleSection({ onChanged }: { onChanged: () => void }) {
@@ -592,7 +625,7 @@ function PrincipleSection({ onChanged }: { onChanged: () => void }) {
           그간 질의응답 사례에서 뽑은 일반 집행 기준입니다. 근거 순서는 <b>지침 및 FAQ → 집행원리 → 표준답안</b>이며, 질문마다 관련 집행원리를 찾아 AI에 <code>[집행원리]</code> 꼬리표로 함께 넘깁니다. 사용자 화면에는 번호를 보여주지 않습니다.
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          첫 줄 머리글: 번호 · 분야 · 재원 · 적용시기 · <b>집행원리</b>(필수) · 비고. 엑셀에서 ‘CSV(쉼표로 분리)’로 저장한 파일도 그대로 올리면 됩니다. 올리면 이전 묶음을 대신해 바로 쓰이고, 이전 묶음은 되돌릴 수 있게 보관됩니다.
+          첫 줄 머리글: 원칙 ID · 중분류 · 세분류 · 질문키워드 · <b>답변원칙</b>(필수) · 세부설명 · 예외·유의점 · 연결처 · 공개근거(지침,법령,FAQ). 질문 키워드·답변 원칙·세부 설명으로 검색하고, AI에는 원칙 ID를 빼고 넘깁니다. 엑셀에서 ‘CSV(쉼표로 분리)’로 저장한 파일도 그대로 올리면 됩니다. 올리면 이전 묶음을 대신해 바로 쓰이고, 이전 묶음은 되돌릴 수 있게 보관됩니다.
         </p>
         <div className="flex flex-wrap gap-2">
           <a className="btn-secondary" href="/api/admin/knowledge/principles/template">
@@ -670,29 +703,34 @@ function PrincipleItems({ setId }: { setId: number }) {
   }, [setId, q]);
   return (
     <div className="mt-3 space-y-2">
-      <input className="input" placeholder="번호·분야·내용 검색" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className="input" placeholder="원칙 ID·분류·키워드·내용 검색" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-slate-50 text-left text-slate-500 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-2 py-1.5">번호</th>
-              <th className="px-2 py-1.5">분야</th>
-              <th className="px-2 py-1.5">재원</th>
-              <th className="px-2 py-1.5">적용시기</th>
-              <th className="px-2 py-1.5">집행원리</th>
+              <th className="px-2 py-1.5">원칙 ID</th>
+              <th className="px-2 py-1.5">분류</th>
+              <th className="px-2 py-1.5">답변 원칙</th>
+              <th className="px-2 py-1.5">연결처</th>
+              <th className="px-2 py-1.5">공개 근거</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {items.map((p) => (
               <tr key={p.id} className="align-top text-slate-700 dark:text-slate-200">
                 <td className="whitespace-nowrap px-2 py-1.5 font-mono">{p.code}</td>
-                <td className="px-2 py-1.5">{p.category}</td>
-                <td className="px-2 py-1.5">{p.funding}</td>
-                <td className="whitespace-nowrap px-2 py-1.5">{p.period}</td>
+                <td className="px-2 py-1.5">
+                  {p.category}
+                  {p.subcategory && <span className="block text-slate-400">{p.subcategory}</span>}
+                </td>
                 <td className="px-2 py-1.5">
                   {p.text}
-                  {p.note && <span className="block text-slate-400">비고: {p.note}</span>}
+                  {p.keywords && <span className="block text-slate-400">키워드: {p.keywords}</span>}
+                  {p.detail && <span className="block text-slate-500">세부 설명: {p.detail}</span>}
+                  {p.caution && <span className="block text-amber-700 dark:text-amber-400">예외·유의점: {p.caution}</span>}
                 </td>
+                <td className="px-2 py-1.5">{p.referral}</td>
+                <td className="px-2 py-1.5">{p.basis}</td>
               </tr>
             ))}
           </tbody>

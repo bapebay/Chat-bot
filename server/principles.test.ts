@@ -5,7 +5,7 @@ import { hashPassword } from './auth.js';
 import { buildContext } from './chat.js';
 import { openDatabase } from './db.js';
 import { KnowledgeBase } from './knowledge/index.js';
-import { decodeCsv, parseCsv, parsePrinciplesCsv } from './knowledge/principles.js';
+import { decodeCsv, parseCsv, parsePrinciplesCsv, principlesTemplateCsv } from './knowledge/principles.js';
 import { activateQaVersion, createQaDraft } from './knowledge/store.js';
 import type { LlmClient, LlmRequest } from './llm/index.js';
 
@@ -24,26 +24,37 @@ function encodeCp949(text: string): Buffer {
   return Buffer.from(out);
 }
 
+// 실제 파일 형식: 머리글의 '공개근거(지침,법령,FAQ)'를 따옴표 없이 저장해 괄호 안 쉼표에서 칸이 갈라진 경우까지
 const CSV = [
-  '번호,분야,재원,적용시기,집행원리,비고',
-  'P-001,인건비·수당,순수앵커,2026,"과제책임자에게 해당 과제에서 수당을 지급하는 것은 불가하다.",관련 질의 다수',
-  'P-002,연구시설·장비,공통,2025~,"추정가격 1억원 이상 연구장비는 발주 전에 심의를 거친 경우에 한해 집행할 수 있다, 사후 심의는 불가하다.",',
-  ',,,,,',
-  'P-003,회의비,공통,,"",',
+  '원칙 ID,중분류,세분류,질문키워드,답변원칙,세부설명,예외-유의점,연결처,공개근거(지침,법령,FAQ)',
+  'P-001,인건비,수당,"과제책임자 수당, 책임자 수당",과제책임자에게 해당 과제에서 수당을 지급할 수 없다.,"다른 과제 참여 수당은\n그 과제 기준에 따른다.",겸직이면 달라질 수 있다.,지역앵커센터,지침 제5조,FAQ 12',
+  'P-002,연구시설·장비,구입,"장비 심의, 사후 심의","추정가격 1억원 이상 연구장비는 발주 전에 심의를 거친 경우에 한해 집행할 수 있다, 사후 심의는 불가하다.",,,재단,"지침 제20조, 국가연구개발혁신법"',
+  ',,,,,,,,',
+  'P-003,회의비,식대,,,,,,',
 ].join('\r\n');
 
-test('집행원리 CSV: 따옴표 속 쉼표, 빈 행, 내용 없는 행, UTF-8·CP949 모두 읽는다', () => {
+test('집행원리 CSV: 실제 열 형식(원칙 ID~공개근거), 따옴표 속 쉼표·줄바꿈, 갈라진 머리글, UTF-8·CP949', () => {
   assert.deepEqual(parseCsv('a,"b,c",d\n"x ""y""",z\n'), [['a', 'b,c', 'd'], ['x "y"', 'z']]);
   for (const bytes of [Buffer.from('﻿' + CSV, 'utf8'), encodeCp949(CSV)]) {
-    assert.match(decodeCsv(bytes), /집행원리/);
+    assert.match(decodeCsv(bytes), /답변원칙/);
     const { items, warnings } = parsePrinciplesCsv(bytes);
     assert.equal(items.length, 2);
-    assert.equal(items[1].code, 'P-002');
-    assert.match(items[1].text, /심의를 거친 경우에 한해 집행할 수 있다, 사후 심의는 불가하다/);
-    assert.equal(items[0].funding, '순수앵커');
-    assert.equal(warnings.length, 1); // P-003 내용 없음
+    const [a, b] = items;
+    assert.deepEqual(
+      { code: a.code, category: a.category, subcategory: a.subcategory, keywords: a.keywords, caution: a.caution, referral: a.referral, basis: a.basis },
+      { code: 'P-001', category: '인건비', subcategory: '수당', keywords: '과제책임자 수당, 책임자 수당', caution: '겸직이면 달라질 수 있다.', referral: '지역앵커센터', basis: '지침 제5조, FAQ 12' },
+    );
+    assert.equal(a.detail, '다른 과제 참여 수당은\n그 과제 기준에 따른다.');
+    assert.match(b.text, /심의를 거친 경우에 한해 집행할 수 있다, 사후 심의는 불가하다/);
+    assert.equal(b.basis, '지침 제20조, 국가연구개발혁신법');
+    assert.equal(warnings.length, 1); // P-003 답변 원칙 없음
   }
-  assert.throws(() => parsePrinciplesCsv(Buffer.from('a,b\n1,2')), /집행원리/);
+  // 머리글을 따옴표로 감싸 저장한 경우도 같다
+  const quoted = CSV.replace('공개근거(지침,법령,FAQ)', '"공개근거(지침,법령,FAQ)"');
+  assert.equal(parsePrinciplesCsv(Buffer.from(quoted, 'utf8')).items[0].basis, '지침 제5조, FAQ 12');
+  // 내려받는 양식은 예시 행만 있어 그대로 올리면 '내용 없음'
+  assert.throws(() => parsePrinciplesCsv(Buffer.from(principlesTemplateCsv(), 'utf8')), /읽을 집행원리가 없습니다/);
+  assert.throws(() => parsePrinciplesCsv(Buffer.from('a,b\n1,2')), /답변 원칙/);
 });
 
 async function setup() {
@@ -98,14 +109,15 @@ test('집행원리를 올리면 검색되고, 질문할 때 지침 다음·표�
   const ans = await app.inject({ method: 'POST', url: `/api/conversations/${conv.id}/messages`, headers: { cookie }, payload: { content: '과제책임자에게 수당 지급이 되나요?' } });
   assert.equal(ans.statusCode, 200);
   const sent = calls[0].messages.at(-1)!.content;
-  assert.match(sent, /<근거자료>[\s\S]*\[집행원리 P1 \| 번호: P-001[\s\S]*<\/근거자료>/);
+  assert.match(sent, /<근거자료>[\s\S]*\[집행원리 P1 \| 분야: 인건비 > 수당 \| 연결처: 지역앵커센터\]\n질문 키워드: [^\n]+\n답변 원칙: 과제책임자에게[\s\S]*예외·유의점: 겸직[\s\S]*공개 근거: 지침 제5조, FAQ 12[\s\S]*<\/근거자료>/);
+  assert.doesNotMatch(sent, /P-001/, '원칙 ID는 AI에 넘기지 않는다');
   assert.ok(JSON.parse(ans.json().messages.at(-1).citations).retrieved.principle.some((p: { code: string }) => p.code === 'P-001'));
 });
 
 test('집행원리 묶음: 새로 올리면 이전 묶음은 보관, 되돌리기, 사용 중인 묶음은 삭제 불가', async () => {
   const { kb, app, cookie, upload } = await setup();
   const first = (await upload('1차.csv', Buffer.from(CSV, 'utf8'))).json();
-  const second = (await upload('2차.csv', Buffer.from('집행원리\n회의비는 1인당 기준 안에서 집행한다.\n', 'utf8'))).json();
+  const second = (await upload('2차.csv', Buffer.from('답변원칙\n회의비는 1인당 기준 안에서 집행한다.\n', 'utf8'))).json();
   assert.equal(kb.stats.principle, 1);
   const sets = (await app.inject({ url: '/api/admin/knowledge/principles', headers: { cookie } })).json();
   assert.deepEqual(sets.map((s: { status: string }) => s.status), ['active', 'archived']);

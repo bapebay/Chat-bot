@@ -149,8 +149,11 @@ export function savePrincipleSet(db: DB, filename: string, userId: number | null
         .prepare(`INSERT INTO principle_sets (filename, uploaded_by, item_count, warnings) VALUES (?, ?, ?, ?)`)
         .run(filename, userId, items.length, JSON.stringify(warnings)).lastInsertRowid,
     );
-    const ins = db.prepare('INSERT INTO principles (set_id, code, category, funding, period, text, note) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    for (const p of items) ins.run(id, p.code, p.category, p.funding, p.period, p.text, p.note);
+    const ins = db.prepare(
+      `INSERT INTO principles (set_id, code, category, subcategory, keywords, text, detail, caution, referral, basis)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const p of items) ins.run(id, p.code, p.category, p.subcategory, p.keywords, p.text, p.detail, p.caution, p.referral, p.basis);
     activatePrincipleSet(db, id);
     return id;
   })();
@@ -189,9 +192,10 @@ export function listPrinciples(db: DB, setId: number, q: string, limit = 300) {
   const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   return db
     .prepare(
-      `SELECT * FROM principles WHERE set_id = ?
-         AND (? = '' OR code LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')
+      `SELECT id, code, category, subcategory, keywords, text, detail, caution, referral, basis FROM principles WHERE set_id = ?
+         AND (? = '' OR code LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\' OR subcategory LIKE ? ESCAPE '\\'
+              OR keywords LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')
        ORDER BY id LIMIT ?`,
     )
-    .all(setId, q, like, like, like, limit);
+    .all(setId, q, like, like, like, like, like, like, limit);
 }
