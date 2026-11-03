@@ -541,10 +541,13 @@ interface PrincipleItem {
   id: number;
   code: string;
   category: string;
-  funding: string;
-  period: string;
+  subcategory: string;
+  keywords: string;
   text: string;
-  note: string;
+  detail: string;
+  caution: string;
+  referral: string;
+  basis: string;
 }
 
 function PrincipleSection({ onChanged }: { onChanged: () => void }) {
@@ -596,7 +599,7 @@ function PrincipleSection({ onChanged }: { onChanged: () => void }) {
           그간 질의응답 사례에서 뽑은 일반 집행 기준입니다. 근거 순서는 <b>지침 및 FAQ → 집행원리 → 표준답안</b>이며, 질문마다 관련 집행원리를 찾아 AI에 <code>[집행원리]</code> 꼬리표로 함께 넘깁니다. 사용자 화면에는 번호를 보여주지 않습니다.
         </p>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          첫 줄 머리글: 번호 · 분야 · 재원 · 적용시기 · <b>집행원리</b>(필수) · 비고. 엑셀에서 ‘CSV(쉼표로 분리)’로 저장한 파일도 그대로 올리면 됩니다. 올리면 이전 묶음을 대신해 바로 쓰이고, 이전 묶음은 되돌릴 수 있게 보관됩니다.
+          첫 줄 머리글: 원칙 ID · 중분류 · 세분류 · 질문키워드 · <b>답변원칙</b>(필수) · 세부설명 · 예외·유의점 · 연결처 · 공개근거(지침,법령,FAQ). 질문 키워드·답변 원칙·세부 설명으로 검색하고, AI에는 원칙 ID를 빼고 넘깁니다. 엑셀에서 ‘CSV(쉼표로 분리)’로 저장한 파일도 그대로 올리면 됩니다. 올리면 이전 묶음을 대신해 바로 쓰이고, 이전 묶음은 되돌릴 수 있게 보관됩니다.
         </p>
         <div className="flex flex-wrap gap-2">
           <a className="btn-secondary" href="/api/admin/knowledge/principles/template">
@@ -674,29 +677,34 @@ function PrincipleItems({ setId }: { setId: number }) {
   }, [setId, q]);
   return (
     <div className="mt-3 space-y-2">
-      <input className="input" placeholder="번호·분야·내용 검색" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input className="input" placeholder="원칙 ID·분류·키워드·내용 검색" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="max-h-96 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-slate-50 text-left text-slate-500 dark:bg-slate-900 dark:text-slate-400">
             <tr>
-              <th className="px-2 py-1.5">번호</th>
-              <th className="px-2 py-1.5">분야</th>
-              <th className="px-2 py-1.5">재원</th>
-              <th className="px-2 py-1.5">적용시기</th>
-              <th className="px-2 py-1.5">집행원리</th>
+              <th className="px-2 py-1.5">원칙 ID</th>
+              <th className="px-2 py-1.5">분류</th>
+              <th className="px-2 py-1.5">답변 원칙</th>
+              <th className="px-2 py-1.5">연결처</th>
+              <th className="px-2 py-1.5">공개 근거</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {items.map((p) => (
               <tr key={p.id} className="align-top text-slate-700 dark:text-slate-200">
                 <td className="whitespace-nowrap px-2 py-1.5 font-mono">{p.code}</td>
-                <td className="px-2 py-1.5">{p.category}</td>
-                <td className="px-2 py-1.5">{p.funding}</td>
-                <td className="whitespace-nowrap px-2 py-1.5">{p.period}</td>
+                <td className="px-2 py-1.5">
+                  {p.category}
+                  {p.subcategory && <span className="block text-slate-400">{p.subcategory}</span>}
+                </td>
                 <td className="px-2 py-1.5">
                   {p.text}
-                  {p.note && <span className="block text-slate-400">비고: {p.note}</span>}
+                  {p.keywords && <span className="block text-slate-400">키워드: {p.keywords}</span>}
+                  {p.detail && <span className="block text-slate-500">세부 설명: {p.detail}</span>}
+                  {p.caution && <span className="block text-amber-700 dark:text-amber-400">예외·유의점: {p.caution}</span>}
                 </td>
+                <td className="px-2 py-1.5">{p.referral}</td>
+                <td className="px-2 py-1.5">{p.basis}</td>
               </tr>
             ))}
           </tbody>

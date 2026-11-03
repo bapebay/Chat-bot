@@ -134,12 +134,15 @@ CREATE TABLE IF NOT EXISTS principle_sets (
 CREATE TABLE IF NOT EXISTS principles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   set_id INTEGER NOT NULL REFERENCES principle_sets(id) ON DELETE CASCADE,
-  code TEXT NOT NULL,
-  category TEXT NOT NULL DEFAULT '',
-  funding TEXT NOT NULL DEFAULT '',
-  period TEXT NOT NULL DEFAULT '',
-  text TEXT NOT NULL,
-  note TEXT NOT NULL DEFAULT ''
+  code TEXT NOT NULL,              -- 원칙 ID
+  category TEXT NOT NULL DEFAULT '',     -- 중분류
+  subcategory TEXT NOT NULL DEFAULT '',  -- 세분류
+  keywords TEXT NOT NULL DEFAULT '',     -- 질문 키워드
+  text TEXT NOT NULL,                    -- 답변 원칙
+  detail TEXT NOT NULL DEFAULT '',       -- 세부 설명
+  caution TEXT NOT NULL DEFAULT '',      -- 예외·유의점
+  referral TEXT NOT NULL DEFAULT '',     -- 연결처
+  basis TEXT NOT NULL DEFAULT ''         -- 공개 근거 (지침·법령·FAQ)
 );
 CREATE INDEX IF NOT EXISTS idx_principles_set ON principles(set_id, id);
 
@@ -321,6 +324,10 @@ function migrate(db: DB) {
   db.exec('DELETE FROM out_of_scope');
   // 검수자 역할을 없애고 그 권한을 관리자에게 합쳤다 (기존 검수자 계정은 관리자로)
   db.exec(`UPDATE users SET role = 'admin' WHERE role = 'reviewer'`);
+  // 집행원리 CSV 열을 실제 파일 형식(원칙 ID·중분류·세분류·질문 키워드·답변 원칙·세부 설명·예외·유의점·연결처·공개 근거)으로 바꿨다
+  for (const col of ['subcategory', 'keywords', 'detail', 'caution', 'referral', 'basis']) {
+    if (!has('principles', col)) db.exec(`ALTER TABLE principles ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+  }
   // 연결 대상 연락처 기능을 없앴다 (답변에는 '○○에 문의하시기 바랍니다'만 안내)
   db.exec('DROP TABLE IF EXISTS referral_contacts');
 }

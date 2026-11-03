@@ -9,7 +9,7 @@ import { parseQaWorkbook } from '../../../server/knowledge/excel';
 import { looksLikeFollowUp } from '../../../server/knowledge/followup';
 import { BLOCKED_TEXT, detectInjection, leaksInstructions, SECURITY_DAILY_STRIKES } from '../../../server/knowledge/guard';
 import { isQaMarkdown, parseQaMarkdown } from '../../../server/knowledge/qa-markdown';
-import { parsePrinciplesCsv } from '../../../server/knowledge/principles';
+import { parsePrinciplesCsv, principleContext, principleSearchText } from '../../../server/knowledge/principles';
 import { mergeSearchResults, multiQuestionNote, splitByAnd, splitQuestions } from '../../../server/knowledge/split';
 import { chunkDocument, chunkTextFile, extractPdfPages } from '../../../server/knowledge/guideline';
 import { maskPii, QUERY_STOP_TOKENS, tokenize } from '../../../server/knowledge/text';
@@ -195,7 +195,7 @@ function search(query: string, businessType: string) {
   const qaHits = pick(qa, num('top_k_qa'));
   const gHits = pick(rank(guides, guides.map((g) => `${g.clause}\n${g.text}`), query, tk), num('top_k_guideline'));
   const prs = activePrinciples();
-  const pHits = pick(rank(prs, prs.map((p) => [p.category, p.text].filter(Boolean).join('\n')), query, tk), 4);
+  const pHits = pick(rank(prs, prs.map((p) => principleSearchText(p)), query, tk), 4);
   const oos = rank(outOfScope, outOfScope.map((o) => o.question), query, tk).sort((a, b) => b.score - a.score)[0];
   return {
     qa: qaHits,
@@ -213,7 +213,7 @@ function overlapsEvidence(query: string, r: Json): boolean {
   const texts = [
     ...r.qa.filter((h: Json) => h.relevant).map((h: Json) => `${qaText(h.doc)}\n${h.doc.answer}`),
     ...r.guideline.filter((h: Json) => h.relevant).map((h: Json) => `${h.doc.clause}\n${h.doc.text}`),
-    ...r.principle.filter((h: Json) => h.relevant).map((h: Json) => `${h.doc.category}\n${h.doc.text}`),
+    ...r.principle.filter((h: Json) => h.relevant).map((h: Json) => principleSearchText(h.doc)),
   ];
   return texts.some((t: string) => tokenize(t).some((tok) => tokens.has(tok)));
 }
@@ -296,7 +296,7 @@ function generateAnswer(history: Json[], businessType: string, question: string)
     '',
     '**상세 안내**',
     ...citedQa.map((q: Json) => `- ${q.answer}`),
-    ...relPrinciple.map((p: Json) => `- ${p.text}`),
+    ...relPrinciple.flatMap((p: Json) => [`- ${p.text}`, ...(p.caution ? [`  - 예외·유의점: ${p.caution}`] : []), ...(p.basis ? [`  - 근거: ${p.basis}`] : [])]),
     ...(citedQa.length || relPrinciple.length ? [] : citedGuide.map((c: Json) => `- ${c.text.split('\n').slice(1).join(' ')}`)),
     '',
     '**유의사항**: (데모) 이 페이지는 실제 AI 대신 테스트 모델이 검색된 표준답안 문장을 그대로 보여줍니다. 실제 서비스에서는 AI가 질문 상황에 맞춰 문장을 다시 씁니다.',
@@ -334,18 +334,7 @@ function buildContext(r: Json): string {
   // 근거 계층 순서대로: 1단계 지침 및 FAQ → 2단계 집행원리 → 3단계 표준답안 (서버와 같게)
   const parts: string[] = [];
   r.guideline.forEach((h: Json, i: number) => parts.push(`[지침 및 FAQ G${i + 1} | ${clean(h.doc.clause)} | 문서: ${clean(h.doc.doc_name)} | 쪽: ${h.doc.page ?? ''}]\n${h.doc.text}`));
-  (r.principle ?? []).forEach((h: Json, i: number) => {
-    const d = h.doc;
-    parts.push(
-      [
-        `[집행원리 P${i + 1} | 번호: ${clean(d.code)} | 분야: ${clean(d.category) || '-'} | 재원: ${clean(d.funding) || '-'} | 적용 시기: ${clean(d.period) || '-'}]`,
-        d.text,
-        d.note ? `비고: ${d.note}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    );
-  });
+  (r.principle ?? []).forEach((h: Json, i: number) => parts.push(principleContext(h.doc, i)));
   for (const h of r.qa) {
     const d = h.doc;
     parts.push(
@@ -1029,7 +1018,7 @@ route('DELETE', '/api/admin/knowledge/guidelines/:id', 'admin', ({ params }) => 
 route('GET', '/api/admin/knowledge/principles', 'admin', () => [...principleSets].sort((a, b) => b.id - a.id));
 route('GET', '/api/admin/knowledge/principles/sets/:id/items', 'admin', ({ params, query }) => {
   const q = query.get('q') ?? '';
-  return principles.filter((p) => p.set_id === Number(params[0]) && (!q || [p.code, p.category, p.text].some((t) => t.includes(q)))).slice(0, 300);
+  return principles.filter((p) => p.set_id === Number(params[0]) && (!q || [p.code, p.category, p.subcategory, p.keywords, p.text, p.detail].some((t) => (t ?? '').includes(q)))).slice(0, 300);
 });
 route('POST', '/api/admin/knowledge/principles/upload', 'admin', async ({ body }) => {
   const f = await readFile(body, /\.csv$/i);
@@ -1222,6 +1211,11 @@ export function importState(st: Json): void {
   // 예전에 저장된 데이터에서도 데모 사용자의 기본 사업 유형은 '순수앵커'
   // 검수자 역할을 없앴다: 예전에 저장된 데모의 검수자 계정은 지운다 (권한은 관리자가 가짐)
   for (const u of users.filter((x) => x.role === 'reviewer')) users.splice(users.indexOf(u), 1);
+  // 집행원리 열 형식을 바꿨다: 예전 형식으로 저장된 데모 집행원리는 비운다
+  if (principles.some((p) => p.keywords === undefined)) {
+    principles.splice(0, principles.length);
+    principleSets.splice(0, principleSets.length);
+  }
   const demoUser = users.find((u) => u.username === 'user');
   if (demoUser) demoUser.business_type = '순수앵커';
 }

@@ -2,6 +2,7 @@ import type { DB } from '../db.js';
 import { getNumberSetting, getSetting } from '../settings.js';
 import { Bm25 } from './bm25.js';
 import { dot, embedPassagesCached, type Embedder } from './embedder.js';
+import { principleSearchText } from './principles.js';
 
 export interface QaDoc {
   id: number;
@@ -31,12 +32,24 @@ export interface GuidelineDoc {
 /** 집행원리: 질의응답 사례에서 뽑은 일반 집행 기준 (근거 2단계) */
 export interface PrincipleDoc {
   id: number;
+  /** 원칙 ID (AI에 넘기지 않는다: 집행원리 번호는 밖에 보이지 않게) */
   code: string;
+  /** 중분류 */
   category: string;
-  funding: string;
-  period: string;
+  /** 세분류 */
+  subcategory: string;
+  /** 질문 키워드 */
+  keywords: string;
+  /** 답변 원칙 */
   text: string;
-  note: string;
+  /** 세부 설명 */
+  detail: string;
+  /** 예외·유의점 */
+  caution: string;
+  /** 연결처 */
+  referral: string;
+  /** 공개 근거 (지침·법령·FAQ) */
+  basis: string;
 }
 
 export interface OutOfScopeDoc {
@@ -78,10 +91,6 @@ export function isConfirmed(status: string): boolean {
 
 export function qaSearchText(d: Pick<QaDoc, 'question' | 'checklist' | 'category2' | 'category3'>): string {
   return [d.question, d.checklist, d.category2, d.category3].filter(Boolean).join('\n');
-}
-
-export function principleSearchText(d: Pick<PrincipleDoc, 'category' | 'text'>): string {
-  return [d.category, d.text].filter(Boolean).join('\n');
 }
 
 function guidelineSearchText(d: GuidelineDoc): string {
@@ -177,7 +186,7 @@ export class KnowledgeBase {
       )
       .all() as GuidelineDoc[];
     const principleDocs = this.db
-      .prepare(`SELECT p.* FROM principles p JOIN principle_sets s ON s.id = p.set_id WHERE s.status = 'active' ORDER BY p.id`)
+      .prepare(`SELECT p.id, p.code, p.category, p.subcategory, p.keywords, p.text, p.detail, p.caution, p.referral, p.basis FROM principles p JOIN principle_sets s ON s.id = p.set_id WHERE s.status = 'active' ORDER BY p.id`)
       .all() as PrincipleDoc[];
     const oosDocs = this.db.prepare('SELECT * FROM out_of_scope ORDER BY id').all() as OutOfScopeDoc[];
 
