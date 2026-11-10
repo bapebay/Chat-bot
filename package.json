@@ -14,7 +14,8 @@
     "restore": "tsx server/scripts/restore.ts",
     "test": "tsx --test server/**/*.test.ts",
     "download-model": "tsx server/scripts/download-model.ts",
-    "build:demo": "node scripts/build-demo.mjs"
+    "build:demo": "node scripts/build-demo.mjs",
+    "import-demo": "tsx server/scripts/import-demo.ts"
   },
   "engines": {
     "node": ">=20"
