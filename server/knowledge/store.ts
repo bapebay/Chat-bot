@@ -18,7 +18,7 @@ export interface QaVersionRow {
   activated_at: string | null;
 }
 
-export function createQaDraft(db: DB, filename: string, userId: number, items: ParsedQaItem[], warnings: UploadWarning[]): number {
+export function createQaDraft(db: DB, filename: string, userId: number | null, items: ParsedQaItem[], warnings: UploadWarning[]): number {
   return db.transaction(() => {
     // 적용하지 않은 이전 미리보기는 정리
     db.prepare(`DELETE FROM qa_versions WHERE status = 'draft'`).run();
