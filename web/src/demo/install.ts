@@ -90,10 +90,14 @@ const kst = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(5, 16)
 async function setupStorage(): Promise<void> {
   const c = (window as unknown as { claude?: { use?: (name: string) => Promise<unknown> } }).claude;
   if (!c?.use) return;
-  const db = (await Promise.race([c.use('db').catch(() => null), new Promise((r) => setTimeout(() => r(null), 5000))])) as Db | null;
-  if (!db) return;
-
+  // 계정 정보도 저장 데이터에 있으므로, 다 불러올 때까지 로그인은 '불러오는 중'으로 막는다
   setStorageStatus({ mode: 'loading', savedAt: null, message: '저장된 데이터를 불러오는 중입니다.' });
+  const db = (await Promise.race([c.use('db').catch(() => null), new Promise((r) => setTimeout(() => r(null), 20000))])) as Db | null;
+  if (!db) {
+    setStorageStatus({ mode: 'error', savedAt: null, message: '저장 공간에 연결하지 못했습니다. 새로고침해 주세요.' });
+    return;
+  }
+
   let chunkCount = 0;
   let lastChunks: string[] = [];
   try {

@@ -639,8 +639,16 @@ route('POST', '/api/auth/login', 'none', async ({ body }) => {
   const name = String(body.username ?? '').trim();
   const f = loginFails.get(name);
   if (f && f.until > Date.now()) throw new HttpError(429, '비밀번호를 여러 번 틀려 잠시 막았습니다. 5분 뒤 다시 시도해 주세요.');
+  if (storageStatus.mode === 'loading') throw new HttpError(503, '계정 정보를 불러오는 중입니다. 몇 초 뒤 다시 로그인해 주세요.');
+  if (!users.some((x) => x.password)) throw new HttpError(503, '계정 정보를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 로그인해 주세요.');
   const u = users.find((x) => x.username === name);
-  if (!u || !(await verifyPassword(String(body.password ?? ''), u.password))) {
+  let ok = false;
+  try {
+    ok = !!u && (await verifyPassword(String(body.password ?? ''), u.password));
+  } catch {
+    throw new HttpError(500, '이 브라우저에서는 로그인 확인 기능을 쓸 수 없습니다. 크롬·엣지 최신 버전으로 열어 주세요.');
+  }
+  if (!ok) {
     const n = (f?.n ?? 0) + 1;
     loginFails.set(name, { n: n >= 5 ? 0 : n, until: n >= 5 ? Date.now() + 5 * 60_000 : 0 });
     throw new HttpError(401, '아이디 또는 비밀번호가 일치하지 않습니다.');
