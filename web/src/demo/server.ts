@@ -98,7 +98,42 @@ const others = [
   addUser({ username: 'univ_gw', role: 'user', org_type: '대학', org_name: '가상과학기술대학교', region: '강원', business_type: '순수앵커' }),
 ];
 addUser({ username: 'univ_new', role: 'user', org_type: '대학', org_name: '가상국립대학교', region: '전남', business_type: '의대교육', status: 'pending', last_login_at: null, created_at: ago(90) });
-const DEMO_PASSWORD = 'demo1234';
+// ----- 비밀번호 (계정마다 다르게, 해시로만 저장) -----
+// 저장 데이터는 페이지를 연 사람이 읽을 수 있으므로 원문은 남기지 않고 PBKDF2 해시만 둔다.
+type PasswordHash = { alg: 'pbkdf2-sha256'; iter: number; salt: string; hash: string };
+const PBKDF2_ITER = 100_000;
+const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+const unb64 = (s: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function pbkdf2(password: string, salt: Uint8Array<ArrayBuffer>, iter: number): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter }, key, 256));
+}
+export async function hashPassword(password: string): Promise<PasswordHash> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  return { alg: 'pbkdf2-sha256', iter: PBKDF2_ITER, salt: b64(salt), hash: b64(await pbkdf2(password, salt, PBKDF2_ITER)) };
+}
+async function verifyPassword(password: string, h: unknown): Promise<boolean> {
+  const p = h as PasswordHash | undefined;
+  if (!p || p.alg !== 'pbkdf2-sha256' || typeof password !== 'string' || !password) return false;
+  const got = b64(await pbkdf2(password, unb64(p.salt), p.iter));
+  let diff = got.length ^ p.hash.length;
+  for (let i = 0; i < Math.min(got.length, p.hash.length); i++) diff |= got.charCodeAt(i) ^ p.hash.charCodeAt(i);
+  return diff === 0;
+}
+/** 헷갈리는 글자(0/O, 1/l/I)를 뺀 임시 비밀번호 */
+function tempPassword(len = 10): string {
+  const abc = 'abcdefghjkmnpqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from(crypto.getRandomValues(new Uint32Array(len)), (n) => abc[n % abc.length]).join('');
+}
+async function issueTempPassword(u: Json): Promise<string> {
+  const pw = tempPassword();
+  u.password = await hashPassword(pw);
+  u.failed_attempts = 0;
+  u.locked = false;
+  return pw;
+}
+// 같은 화면에서 비밀번호를 연달아 틀리면 잠깐 막는다
+const loginFails = new Map<string, { n: number; until: number }>();
 let currentUserId: number | null = null;
 
 let qaVersionId = nextId();
@@ -600,9 +635,17 @@ route('GET', '/api/meta', 'none', () => ({ org_types: ['재단', '지역앵커�
 route('GET', '/api/health', 'none', () => ({ ok: true }));
 
 // ----- 인증 -----
-route('POST', '/api/auth/login', 'none', ({ body }) => {
-  const u = users.find((x) => x.username === String(body.username ?? '').trim());
-  if (!u || body.password !== DEMO_PASSWORD) throw new HttpError(401, '아이디 또는 비밀번호가 일치하지 않습니다. (데모 비밀번호: demo1234)');
+route('POST', '/api/auth/login', 'none', async ({ body }) => {
+  const name = String(body.username ?? '').trim();
+  const f = loginFails.get(name);
+  if (f && f.until > Date.now()) throw new HttpError(429, '비밀번호를 여러 번 틀려 잠시 막았습니다. 5분 뒤 다시 시도해 주세요.');
+  const u = users.find((x) => x.username === name);
+  if (!u || !(await verifyPassword(String(body.password ?? ''), u.password))) {
+    const n = (f?.n ?? 0) + 1;
+    loginFails.set(name, { n: n >= 5 ? 0 : n, until: n >= 5 ? Date.now() + 5 * 60_000 : 0 });
+    throw new HttpError(401, '아이디 또는 비밀번호가 일치하지 않습니다.');
+  }
+  loginFails.delete(name);
   if (u.status !== 'approved') throw new HttpError(403, '관리자의 승인을 기다리는 계정입니다.');
   currentUserId = u.id;
   u.last_login_at = ts();
@@ -613,14 +656,22 @@ route('POST', '/api/auth/logout', 'none', () => {
   return { ok: true };
 });
 route('GET', '/api/auth/me', 'user', ({ me }) => ({ user: pub(me) }));
-route('POST', '/api/auth/signup', 'none', ({ body }) => {
-  if (!/^[A-Za-z0-9._-]{4,30}$/.test(String(body.username ?? ''))) throw new HttpError(400, '아이디는 영문·숫자·._- 조합 4~30자로 입력해 주세요.');
-  if (users.some((u) => u.username === body.username)) throw new HttpError(409, '이미 사용 중인 아이디입니다.');
-  if (!body.org_type || !body.org_name || !body.region || !body.business_type) throw new HttpError(400, '소속 정보를 모두 입력해 주세요.');
-  addUser({ username: body.username, role: 'user', org_type: body.org_type, org_name: body.org_name, region: body.region, business_type: body.business_type, status: 'pending', last_login_at: null, created_at: ts() });
-  return { ok: true, message: '가입 신청이 접수되었습니다. (데모) admin 계정으로 로그인해 승인해 보세요. 승인 후 비밀번호 demo1234로 로그인됩니다.' };
+// 데모는 소유자만 저장할 수 있어 방문자의 가입 신청은 남지 않는다. 테스트 계정은 관리자가 만들어 나눠 준다
+route('POST', '/api/auth/signup', 'none', () => {
+  throw new HttpError(403, '테스트 기간에는 가입 신청을 받지 않습니다. 담당자에게 테스트 계정을 받아 주세요.');
 });
-route('POST', '/api/auth/change-password', 'user', () => ({ ok: true }));
+route('POST', '/api/auth/change-password', 'user', async ({ me, body }) => {
+  // 소유자(관리자) 화면에서만 저장된다. 테스트 사용자가 바꾸면 새로고침 때 원래대로 돌아가 혼란스러우므로 막는다
+  if (me.role !== 'admin') throw new HttpError(403, '테스트 계정은 비밀번호를 바꿀 수 없습니다. 필요하면 담당자에게 요청해 주세요.');
+  if (!(await verifyPassword(String(body.current_password ?? ''), me.password))) throw new HttpError(400, '현재 비밀번호가 맞지 않습니다.');
+  const next = String(body.new_password ?? '');
+  if (next.length < 10) throw new HttpError(400, '새 비밀번호는 10자 이상으로 정해 주세요.');
+  me.password = await hashPassword(next);
+  me.must_change_password = false;
+  audit('비밀번호 변경', me.username);
+  notifyChange();
+  return { ok: true };
+});
 route('PATCH', '/api/auth/me', 'user', ({ me, body }) => {
   me.business_type = body.business_type;
   return { ok: true };
@@ -842,13 +893,14 @@ route('DELETE', '/api/review/qa/:id', 'admin', ({ me, params, body }) => {
 
 // ----- 관리: 사용자 -----
 route('GET', '/api/admin/users', 'admin', () => [...users].sort((a, b) => (a.status === b.status ? b.id - a.id : a.status === 'pending' ? -1 : 1)).map(pub));
-route('POST', '/api/admin/users', 'admin', ({ body }) => {
+route('POST', '/api/admin/users', 'admin', async ({ body }) => {
   if (users.some((u) => u.username === body.username)) throw new HttpError(409, '이미 사용 중인 아이디입니다.');
-  addUser({ username: body.username, role: body.role, org_type: body.org_type, org_name: body.org_name, region: body.region, business_type: body.business_type, last_login_at: null, created_at: ts() });
+  const u = addUser({ username: body.username, role: body.role, org_type: body.org_type, org_name: body.org_name, region: body.region, business_type: body.business_type, last_login_at: null, created_at: ts() });
+  const temp = await issueTempPassword(u);
   audit('계정 생성', body.username, `권한 ${body.role}`);
-  return { ok: true, temp_password: DEMO_PASSWORD };
+  return { ok: true, temp_password: temp };
 });
-// 계정 일괄 등록: 실제 서버와 같은 양식·검사. 데모 계정의 비밀번호는 모두 demo1234
+// 계정 일괄 등록: 실제 서버와 같은 양식·검사. 계정마다 임시 비밀번호를 새로 만든다
 route('POST', '/api/admin/users/bulk', 'admin', async ({ body }) => {
   const f = await readFile(body, /\.xlsx$/i);
   let rows;
@@ -859,14 +911,15 @@ route('POST', '/api/admin/users/bulk', 'admin', async ({ body }) => {
   }
   if (!rows.length) throw new HttpError(400, '등록할 계정이 없습니다. 예시 행 아래에 계정을 적어 주세요.');
   const seen = new Set<string>();
-  const results = rows.map(({ row, input }) => {
+  const results = [];
+  for (const { row, input } of rows) {
     const error = seen.has(input.username)
       ? '파일 안에 같은 아이디가 또 있습니다.'
       : (accountFieldProblem(input) ?? (users.some((u) => u.username === input.username) ? '이미 사용 중인 아이디입니다.' : null));
     seen.add(input.username);
-    if (!error) addUser({ ...input, last_login_at: null, created_at: ts(), must_change_password: false });
-    return { row, username: input.username, org_name: input.org_name, role: input.role, temp_password: error ? null : DEMO_PASSWORD, error };
-  });
+    const temp = error ? null : await issueTempPassword(addUser({ ...input, last_login_at: null, created_at: ts(), must_change_password: false }));
+    results.push({ row, username: input.username, org_name: input.org_name, role: input.role, temp_password: temp, error });
+  }
   const created = results.filter((r) => r.temp_password).length;
   audit('계정 일괄 등록', f.name, `${created}명 등록, ${results.length - created}명 실패`);
   return { created, failed: results.length - created, results };
@@ -889,9 +942,11 @@ route('PATCH', '/api/admin/users/:id', 'admin', ({ params, body }) => {
   u.role = body.role;
   return { ok: true };
 });
-route('POST', '/api/admin/users/:id/reset-password', 'admin', ({ params }) => {
-  audit('비밀번호 초기화', userOr404(params[0]).username);
-  return { ok: true, temp_password: DEMO_PASSWORD };
+route('POST', '/api/admin/users/:id/reset-password', 'admin', async ({ params }) => {
+  const u = userOr404(params[0]);
+  const temp = await issueTempPassword(u);
+  audit('비밀번호 초기화', u.username);
+  return { ok: true, temp_password: temp };
 });
 route('DELETE', '/api/admin/users/:id', 'admin', ({ me, params }) => {
   const u = userOr404(params[0]);
@@ -940,7 +995,8 @@ route('POST', '/api/admin/settings/:key/revert', 'admin', ({ me, params, body })
 route('GET', '/api/demo/storage', 'user', () => storageStatus);
 route('POST', '/api/demo/storage/reset', 'admin', async () => {
   if (!resetStorage) throw new HttpError(400, '저장 공간을 쓸 수 없는 화면입니다. 새로고침하면 처음 상태로 돌아갑니다.');
-  await resetStorage();
+  // 계정(비밀번호 포함)은 남긴다. 다 지우면 관리자도 로그인할 수 없게 된다
+  await resetStorage({ v: 1, seq, users });
   return { ok: true };
 });
 route('GET', '/api/admin/system', 'admin', () => ({
@@ -1271,8 +1327,8 @@ let storageStatus: StorageStatus = { mode: 'off', savedAt: null, message: '이 �
 export function setStorageStatus(st: StorageStatus) {
   storageStatus = st;
 }
-let resetStorage: (() => Promise<void>) | null = null;
-export function onResetStorage(fn: () => Promise<void>) {
+let resetStorage: ((keep: Json) => Promise<void>) | null = null;
+export function onResetStorage(fn: (keep: Json) => Promise<void>) {
   resetStorage = fn;
 }
 

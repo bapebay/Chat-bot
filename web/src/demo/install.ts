@@ -158,11 +158,14 @@ async function setupStorage(): Promise<void> {
     window.clearTimeout(timer);
     timer = window.setTimeout(() => void save(), 1500);
   });
-  onResetStorage(async () => {
+  onResetStorage(async (keep) => {
     readonly = true; // 지우는 동안 자동 저장 멈춤
     window.clearTimeout(timer);
-    for (let i = 0; i < chunkCount; i++) await db.doc(`demo_chunks/c${i}`).delete();
-    await db.doc('demo/meta').delete();
+    // 계정만 남기고 나머지 데이터는 지운다
+    const json = JSON.stringify(keep);
+    await db.doc('demo_chunks/c0').set({ text: json });
+    for (let i = 1; i < chunkCount; i++) await db.doc(`demo_chunks/c${i}`).delete();
+    await db.doc('demo/meta').set({ chunks: 1, savedAt: kst(), chars: json.length });
     setTimeout(() => location.reload(), 300);
   });
 }
