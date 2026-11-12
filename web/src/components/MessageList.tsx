@@ -31,22 +31,26 @@ function copyText(body: string, closing: string, disclaimer: string): string {
   return parts.join('\n\n');
 }
 
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // 클립보드 권한이 없는 환경: 숨긴 입력칸으로 복사
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+}
+
 function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // 클립보드 권한이 없는 환경: 숨긴 입력칸으로 복사
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    }
+    await copyToClipboard(text);
     setDone(true);
     setTimeout(() => setDone(false), 2000);
   }
@@ -128,6 +132,102 @@ function FeedbackButtons({ current, onSubmit }: { current?: Feedback; onSubmit: 
   );
 }
 
+/**
+ * 공개 테스트(데모) 전용: 테스터의 평가는 저장되지 않으므로,
+ * 평가·의견·질문·답변을 한 덩어리 글로 복사해 담당자가 안내한 설문·메일에 붙여 넣게 한다.
+ */
+function TesterFeedback({ tester, question, answer }: { tester: string; question: string; answer: string }) {
+  const [open, setOpen] = useState(false);
+  const [rating, setRating] = useState<'좋아요' | '아쉬워요' | ''>('');
+  const [reason, setReason] = useState('');
+  const [comment, setComment] = useState('');
+  const [done, setDone] = useState(false);
+  async function copy() {
+    const now = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 16).replace('T', ' ');
+    const text = [
+      '[앵커 사업비 챗봇 테스트 의견]',
+      `테스터: ${tester}`,
+      `일시: ${now}`,
+      `평가: ${rating}${reason ? ` (${reason})` : ''}`,
+      `의견: ${comment.trim() || '-'}`,
+      '',
+      '■ 질문',
+      question || '-',
+      '',
+      '■ 챗봇 답변',
+      plainText(answer),
+    ].join('\n');
+    await copyToClipboard(text);
+    setDone(true);
+    setOpen(false);
+    setTimeout(() => setDone(false), 6000);
+  }
+  return (
+    <span className="relative flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 rounded border border-indigo-300 px-1.5 py-0.5 font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-indigo-700 dark:text-indigo-300 dark:hover:bg-indigo-950"
+        title="평가와 의견을 질문·답변과 함께 복사합니다"
+      >
+        <MessageSquareQuote className="h-3.5 w-3.5" /> 의견 남기기
+      </button>
+      {done && <span className="text-green-600">복사했습니다. 안내받은 설문·메일에 붙여 넣어 주세요.</span>}
+      {open && (
+        <span className="card absolute left-0 top-7 z-10 block w-80 space-y-2 p-3 text-xs text-slate-700 shadow-lg dark:text-slate-200">
+          <span className="block font-semibold">이 답변 어땠나요?</span>
+          <span className="flex gap-1">
+            {(['좋아요', '아쉬워요'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => {
+                  setRating(r);
+                  if (r === '좋아요') setReason('');
+                }}
+                className={`flex items-center gap-1 rounded-full border px-2.5 py-0.5 ${rating === r ? (r === '좋아요' ? 'border-green-600 bg-green-600 text-white' : 'border-red-500 bg-red-500 text-white') : 'border-slate-300 dark:border-slate-600'}`}
+              >
+                {r === '좋아요' ? <ThumbsUp className="h-3 w-3" /> : <ThumbsDown className="h-3 w-3" />} {r}
+              </button>
+            ))}
+          </span>
+          {rating === '아쉬워요' && (
+            <span className="flex flex-wrap gap-1">
+              {BAD_REASONS.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setReason(reason === r ? '' : r)}
+                  className={`rounded-full border px-2 py-0.5 ${reason === r ? 'border-red-500 bg-red-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}
+                >
+                  {r}
+                </button>
+              ))}
+            </span>
+          )}
+          <textarea
+            className="input h-16 resize-none text-xs"
+            placeholder="의견 (선택, 개인정보는 적지 마세요)"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
+          <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+            이 화면의 평가는 저장되지 않습니다. 복사한 글을 담당자가 안내한 설문이나 메일에 붙여 넣어 주세요.
+          </span>
+          <span className="flex justify-end gap-1">
+            <button type="button" className="btn-secondary px-2 py-1 text-xs" onClick={() => setOpen(false)}>
+              취소
+            </button>
+            <button type="button" className="btn-primary px-2 py-1 text-xs" disabled={!rating} onClick={copy}>
+              의견 복사하기
+            </button>
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
 const DISCLAIMER_SEPARATOR = '\n\n---\n\n> ';
 
 export function MessageList({
@@ -136,8 +236,11 @@ export function MessageList({
   showUsage = false,
   feedback = {},
   onFeedback,
+  tester,
 }: {
   messages: Message[];
+  /** 공개 테스트(데모)의 테스터 아이디. 있으면 평가·문의 대신 '의견 남기기(복사)'를 보여 준다 */
+  tester?: string;
   onAskStaff?: () => void;
   showUsage?: boolean;
   /** 답변 id → 내가 남긴 평가 */
@@ -146,7 +249,7 @@ export function MessageList({
 }) {
   return (
     <>
-      {messages.map((m) =>
+      {messages.map((m, i) =>
         m.role === 'user' ? (
           <div key={m.id} className="flex justify-end">
             <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-indigo-600 p-3.5 text-sm text-white shadow-sm sm:max-w-[75%] sm:text-[15px]">
@@ -157,7 +260,16 @@ export function MessageList({
             </div>
           </div>
         ) : (
-          <AssistantMessage key={m.id} m={m} onAskStaff={onAskStaff} showUsage={showUsage} feedback={feedback[m.id]} onFeedback={onFeedback} />
+          <AssistantMessage
+            key={m.id}
+            m={m}
+            onAskStaff={tester ? undefined : onAskStaff}
+            showUsage={showUsage}
+            feedback={feedback[m.id]}
+            onFeedback={tester ? undefined : onFeedback}
+            tester={tester}
+            question={messages.slice(0, i).reverse().find((x) => x.role === 'user')?.content ?? ''}
+          />
         ),
       )}
     </>
@@ -203,12 +315,16 @@ function AssistantMessage({
   showUsage,
   feedback,
   onFeedback,
+  tester,
+  question,
 }: {
   m: Message;
   onAskStaff?: () => void;
   showUsage: boolean;
   feedback?: Feedback;
   onFeedback?: (messageId: number, f: Feedback) => Promise<void>;
+  tester?: string;
+  question: string;
 }) {
   const c = parseCitations(m);
   // 서버가 본문 뒤에 붙인 면책 문구를 떼어 근거 카드 아래에 보여준다
@@ -228,6 +344,7 @@ function AssistantMessage({
           {disclaimer && <p className="mt-3 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">{disclaimer}</p>}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-3 px-1 text-xs text-slate-400">
+          {tester && <TesterFeedback tester={tester} question={question} answer={[body, closing].filter(Boolean).join('\n\n')} />}
           {onFeedback && <FeedbackButtons current={feedback} onSubmit={(f) => onFeedback(m.id, f)} />}
           {!c?.security && <CopyButton text={copyText(body, closing, disclaimer)} />}
           {onAskStaff && !c?.security && (

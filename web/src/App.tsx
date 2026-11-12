@@ -162,7 +162,8 @@ export default function App() {
         <div className="flex items-center gap-2 sm:gap-4">
           <nav className="flex rounded-lg bg-slate-700 p-1 dark:bg-slate-800">
             {navButton('chat', '챗봇', MessageSquare)}
-            {navButton('inquiries', user.role === 'user' ? '1:1 문의' : '문의 관리', Inbox, badges.inquiries)}
+            {/* 공개 테스트(데모)의 테스터 문의는 저장되지 않아 담당자에게 닿지 않으므로 숨긴다 */}
+            {!(meta.demo && user.role === 'user') && navButton('inquiries', user.role === 'user' ? '1:1 문의' : '문의 관리', Inbox, badges.inquiries)}
             {user.role !== 'user' && navButton('review', '검수', ClipboardList, badges.review)}
             {user.role === 'admin' && navButton('admin', '관리', Settings, badges.users)}
           </nav>
@@ -186,7 +187,9 @@ export default function App() {
       {(meta.test_mode || meta.demo) && (
         <div className="shrink-0 bg-amber-100 px-3 py-1.5 text-center text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
           {meta.demo
-            ? meta.demo_ai
+            ? user.role === 'user'
+              ? '테스트 화면입니다. 대화는 저장되지 않으니, 확인이 필요한 답변은 답변 아래 「의견 남기기」로 복사해 안내받은 설문·메일에 보내 주세요.'
+              : meta.demo_ai
               ? '데모 페이지: 실제 AI(Claude, 보는 사람의 claude.ai 사용량 사용). 올린 데이터는 자동 저장되며 관리 → 시스템 정보에서 저장 상태를 볼 수 있습니다.'
               : '데모 페이지: 가상 데이터와 테스트 모델로 동작합니다. 새로고침하면 처음 상태로 돌아갑니다.'
             : '테스트 모드: 실제 AI 모델이 연결되지 않아 예시 답변이 표시됩니다. (.env 의 LLM_PROVIDER 설정)'}

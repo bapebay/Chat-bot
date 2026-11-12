@@ -248,6 +248,7 @@ export function ChatView({ user, meta, onInquirySent }: { user: User; meta: Meta
               feedback={feedback}
               onFeedback={sendFeedback}
               onAskStaff={current ? () => setInquiryFor({ conversationId: current.id, text: '' }) : undefined}
+              tester={meta.demo && user.role === 'user' ? user.username : undefined}
             />
             {pendingQuestion && (
               <>
